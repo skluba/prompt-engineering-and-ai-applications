@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import uuid
+
 import streamlit as st
 from sqlalchemy.engine import Engine
 
 from app.config import Settings, get_settings
 from app.db import check_connection, get_engine
 from app.llm import generate_text
+from app.tracing import LangfuseTraceContext
 
 
 @st.cache_resource
@@ -33,6 +36,26 @@ def _render_sidebar(settings: Settings) -> None:
             st.info("Langfuse keys unset — tracing disabled until `LANGFUSE_*` is configured.")
 
 
+def _streamlit_langfuse_context(settings: Settings) -> LangfuseTraceContext:
+    """Session-scoped Langfuse context (sessions + optional Streamlit user)."""
+    if "langfuse_session_id" not in st.session_state:
+        st.session_state.langfuse_session_id = str(uuid.uuid4())
+    user_id: str | None = None
+    su = getattr(st, "user", None)
+    if su is not None:
+        for attr in ("email", "id", "sub"):
+            raw = getattr(su, attr, None)
+            if raw is not None and str(raw).strip():
+                user_id = str(raw).strip()
+                break
+    meta = {"surface": "streamlit", "model": settings.gemini_model}
+    return LangfuseTraceContext(
+        session_id=st.session_state.langfuse_session_id,
+        user_id=user_id,
+        metadata=meta,
+    )
+
+
 def _append_assistant_reply(settings: Settings, prompt: str) -> None:
     with st.chat_message("assistant"):
         if not settings.vertex_configured():
@@ -40,7 +63,11 @@ def _append_assistant_reply(settings: Settings, prompt: str) -> None:
             return
         with st.spinner("Generating…"):
             try:
-                reply = generate_text(settings, prompt)
+                reply = generate_text(
+                    settings,
+                    prompt,
+                    trace_context=_streamlit_langfuse_context(settings),
+                )
             except Exception as err:  # noqa: BLE001 — surface LLM/network errors in UI
                 st.exception(err)
                 return

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from google import genai
 
 from app.observability import get_langfuse
+from app.tracing import LangfuseTraceContext, usage_details_from_genai_response
 
 if TYPE_CHECKING:
     from app.config import Settings
@@ -25,16 +26,33 @@ def _get_client(settings: Settings) -> genai.Client:
     )
 
 
-def generate_text(settings: Settings, user_prompt: str) -> str:
-    """Generate a short text response with Gemini (Vertex AI). Optionally trace in Langfuse."""
+def generate_text(
+    settings: Settings,
+    user_prompt: str,
+    *,
+    trace_context: LangfuseTraceContext | None = None,
+) -> str:
+    """Return Gemini (Vertex) text; emit a Langfuse trace when keys are configured."""
     client = _get_client(settings)
     lf = get_langfuse(settings)
     trace = None
     generation = None
+    ctx = trace_context or LangfuseTraceContext()
+    version = settings.langfuse_trace_version.strip() or None
+
     if lf is not None:
-        trace = lf.trace(name="streamlit-chat", input={"prompt": user_prompt})
+        meta = dict(ctx.metadata) if ctx.metadata else None
+        trace = lf.trace(
+            name=ctx.trace_name,
+            input=user_prompt,
+            session_id=ctx.session_id,
+            user_id=ctx.user_id,
+            tags=list(ctx.tags),
+            metadata=meta,
+            version=version,
+        )
         generation = trace.generation(
-            name="vertex-gemini",
+            name=ctx.generation_name,
             model=settings.gemini_model,
             input=user_prompt,
         )
@@ -45,16 +63,20 @@ def generate_text(settings: Settings, user_prompt: str) -> str:
             contents=user_prompt,
         )
         text = (getattr(response, "text", None) or "").strip()
+        usage = usage_details_from_genai_response(response)
+
         if generation is not None:
-            generation.end(output=text)
+            kwargs: dict = {"output": text}
+            if usage:
+                kwargs["usage_details"] = usage
+            generation.end(**kwargs)
         if trace is not None:
             trace.update(output=text)
-        if lf is not None:
-            lf.flush()
         return text
     except Exception as exc:
         if generation is not None:
             generation.end(level="ERROR", status_message=str(exc))
+        raise
+    finally:
         if lf is not None:
             lf.flush()
-        raise

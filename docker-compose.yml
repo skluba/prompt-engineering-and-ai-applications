@@ -1,3 +1,6 @@
+include:
+  - docker-compose.langfuse.yml
+
 services:
   db:
     image: postgres:16-alpine
@@ -24,6 +27,14 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://app:app@db:5432/app
       GOOGLE_GENAI_USE_VERTEXAI: "true"
+      # Langfuse Python SDK (inside Docker network; overrides LANGFUSE_HOST from .env if set there)
+      LANGFUSE_HOST: http://lf-web:3000
+      # In-container path. Default when unset: /secrets/application_default_credentials.json (mounted below).
+      # In `.env` for Docker: leave unset, or set to that path only — never a host path like /Users/...
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/secrets/application_default_credentials.json}
+    volumes:
+      # Default: gcloud ADC after `gcloud auth application-default login`. Override with GCP_ADC_HOST_PATH.
+      - ${GCP_ADC_HOST_PATH:-${HOME}/.config/gcloud/application_default_credentials.json}:/secrets/application_default_credentials.json:ro
     depends_on:
       db:
         condition: service_healthy

@@ -7,7 +7,7 @@ Python stack for a **Streamlit** app that calls **Gemini 2.0 Flash** on **Vertex
 - **Python 3.11+**
 - **Google Cloud** project with **Vertex AI API** enabled and billing (if required by your org)
 - **Gemini on Vertex**: your principal needs a role such as **Vertex AI User** (`roles/aiplatform.user`)
-- **Docker** (optional, for Compose)
+- **Docker** + **Docker Compose v2.20+** (for `include` and the Langfuse stack)
 
 ## Quick start (local)
 
@@ -50,20 +50,17 @@ Python stack for a **Streamlit** app that calls **Gemini 2.0 Flash** on **Vertex
 
 ## Docker (app + database)
 
-Compose injects `DATABASE_URL` for the `app` service. You still need GCP credentials **inside** the container, for example:
+Compose sets **`DATABASE_URL`** for the `app` service and, by default, bind-mounts **Application Default Credentials** from  
+**`$HOME/.config/gcloud/application_default_credentials.json`** (after `gcloud auth application-default login`) read-only to  
+**`/secrets/application_default_credentials.json`** in the container.
 
-- Mount a service account JSON and set `GOOGLE_APPLICATION_CREDENTIALS` to the path inside the container, **or**
-- Run the app on a platform that attaches a workload identity (GKE / Cloud Run).
+1. Run **`gcloud auth application-default login`** on the host if you have not already.
+2. **Optional:** set **`GCP_ADC_HOST_PATH`** in `.env` to another host path (e.g. a service account JSON). If unset, Compose uses the gcloud ADC path above (compose expands **`${HOME}`** when you run `docker compose` from your shell).
+3. **`GOOGLE_APPLICATION_CREDENTIALS`** in `docker-compose.yml` defaults to the in-container mount path.  
+   In `.env`, either **omit** it or set it **only** to `/secrets/application_default_credentials.json`.  
+   Do **not** set it to `/Users/...` — that is a host path and will not exist inside the Linux container.
 
-Example pattern (adjust paths):
-
-```yaml
-# add under app.volumes in docker-compose.yml after you have a key file:
-# volumes:
-#   - ./secrets/sa.json:/run/secrets/sa.json:ro
-# and in environment:
-#   GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/sa.json
-```
+4. If your `.env` still has an empty `GCP_ADC_HOST_PATH=` line from an old template, **delete that line** so the default applies (some setups treat an empty value as “set”).
 
 Then:
 
@@ -71,15 +68,41 @@ Then:
 docker compose up --build
 ```
 
+For production, prefer a workload identity (GKE / Cloud Run) or a dedicated service account JSON mounted the same way.
+
 ## Langfuse
 
-Create a project in [Langfuse Cloud](https://cloud.langfuse.com) (or self-host), then set in `.env`:
+### Cloud
+
+Create a project in [Langfuse Cloud](https://cloud.langfuse.com), then set in `.env`:
 
 - `LANGFUSE_PUBLIC_KEY`
 - `LANGFUSE_SECRET_KEY`
-- `LANGFUSE_HOST` (e.g. `https://us.cloud.langfuse.com` for US data region)
+- `LANGFUSE_HOST` (e.g. `https://cloud.langfuse.com` or `https://us.cloud.langfuse.com`)
+
+### Self-hosted (this repo)
+
+Docker Compose includes [`docker-compose.langfuse.yml`](docker-compose.langfuse.yml) (Langfuse **v3**: `lf-web`, `lf-worker`, dedicated Postgres, ClickHouse, Redis, MinIO). Requires **Docker Compose v2.20+** (`include`).
+
+1. Start the stack: `docker compose up --build` (first boot can take a few minutes).
+2. Open the UI at **http://localhost:3000**, create an organization and project, then **Project settings → API keys**. Copy the keys into `.env` as `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`.
+3. The **app** container sets **`LANGFUSE_HOST=http://lf-web:3000`** in [`docker-compose.yml`](docker-compose.yml) so the Python SDK reaches Langfuse over the Docker network (this overrides `LANGFUSE_HOST` from `.env` for that service).
+4. **Streamlit on the host** with Langfuse in Docker: use **`LANGFUSE_HOST=http://localhost:3000`** in `.env`.
+
+Optional bootstrap: set `LANGFUSE_INIT_*` in `.env` per [Langfuse configuration](https://langfuse.com/docs/deployment/configuration). For non-dev use, replace **`LANGFUSE_ENCRYPTION_KEY`** (64 hex chars; e.g. `openssl rand -hex 32`), **`LANGFUSE_NEXTAUTH_SECRET`**, **`LANGFUSE_SALT`**, and MinIO/Redis/DB passwords.
+
+**Ports:** Langfuse UI **3000**, MinIO S3 **9090**, MinIO console **127.0.0.1:9091**. The app database still publishes **5432**; Langfuse Postgres (`lf-postgres`) has **no** host port.
+
+If your Compose build does not support `include`, run:  
+`docker compose -f docker-compose.yml -f docker-compose.langfuse.yml up`.
 
 If keys are empty, tracing is skipped and the app still runs.
+
+**Tracing in this app** follows the [Langfuse instrumentation skill](.cursor/skills/langfuse/references/instrumentation.md): **sessions** (stable Streamlit `session_id`), optional **user id** from `st.user` when present, **tags** / **metadata** (`surface`, `model`), **model name** + **token usage** on the generation, **`flush()`** after each call, and trace **input** limited to the user message.
+
+Optional `.env`: `LANGFUSE_RELEASE`, `LANGFUSE_TRACING_ENVIRONMENT`, `LANGFUSE_TRACE_VERSION`.
+
+For deeper Langfuse + CLI + docs workflows in Cursor, use the bundled skill at [`.cursor/skills/langfuse/SKILL.md`](.cursor/skills/langfuse/SKILL.md) (from [langfuse/skills](https://github.com/langfuse/skills)).
 
 ## CI / QA (GitHub Actions)
 
@@ -118,10 +141,13 @@ If you ever expose a token in chat or a commit, **revoke it in SonarCloud** and 
 |------|---------|
 | `app/config.py` | Env-based settings (GCP, DB, Langfuse) |
 | `app/db.py` | SQLAlchemy + PostgreSQL helper |
-| `app/llm.py` | Gemini / Vertex generation + optional Langfuse |
+| `app/tracing.py` | Langfuse trace context + GenAI usage mapping |
+| `app/llm.py` | Gemini / Vertex generation + Langfuse generations |
 | `app/observability.py` | Langfuse client factory |
+| `.cursor/skills/langfuse/` | Langfuse Cursor skill (docs + CLI guidance) |
 | `streamlit_app.py` | Streamlit chat shell |
-| `docker-compose.yml` | `db` + `app` services |
+| `docker-compose.yml` | `db` + `app`; includes Langfuse stack |
+| `docker-compose.langfuse.yml` | Self-hosted Langfuse v3 (`lf-*` services) |
 | `Dockerfile` | Production-style app image |
 
 ## Model ID

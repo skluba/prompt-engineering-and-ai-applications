@@ -49,6 +49,15 @@ class Settings(BaseSettings):
         default="https://cloud.langfuse.com",
         validation_alias="LANGFUSE_HOST",
     )
+    langfuse_release: str = Field(default="", validation_alias="LANGFUSE_RELEASE")
+    langfuse_tracing_environment: str = Field(
+        default="",
+        validation_alias="LANGFUSE_TRACING_ENVIRONMENT",
+    )
+    langfuse_trace_version: str = Field(
+        default="",
+        validation_alias="LANGFUSE_TRACE_VERSION",
+    )
 
     def vertex_configured(self) -> bool:
         return bool(self.google_cloud_project.strip())

@@ -19,4 +19,6 @@ def get_langfuse(settings: Settings) -> Any | None:
         public_key=settings.langfuse_public_key,
         secret_key=settings.langfuse_secret_key,
         host=settings.langfuse_host.rstrip("/"),
+        release=settings.langfuse_release or None,
+        environment=settings.langfuse_tracing_environment or None,
     )
