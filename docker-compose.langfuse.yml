@@ -33,6 +33,11 @@ x-langfuse-common-env: &langfuse-common-env
   REDIS_PORT: "6379"
   REDIS_AUTH: ${REDIS_AUTH:-devredissecret}
   REDIS_TLS_ENABLED: "false"
+  # GCP / Vertex (optional): LLM-as-a-judge and other in-product model calls.
+  # Mount the same ADC or service-account JSON as the `app` service (see docker-compose.yml).
+  GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/secrets/application_default_credentials.json}
+  GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
+  GOOGLE_CLOUD_LOCATION: ${GOOGLE_CLOUD_LOCATION:-us-central1}
 
 services:
   lf-postgres:
@@ -124,6 +129,8 @@ services:
         condition: service_healthy
     environment:
       <<: *langfuse-common-env
+    volumes:
+      - ${GCP_ADC_HOST_PATH:-${HOME}/.config/gcloud/application_default_credentials.json}:/secrets/application_default_credentials.json:ro
 
   lf-web:
     image: docker.io/langfuse/langfuse:3
@@ -139,6 +146,8 @@ services:
         condition: service_healthy
     ports:
       - "3000:3000"
+    volumes:
+      - ${GCP_ADC_HOST_PATH:-${HOME}/.config/gcloud/application_default_credentials.json}:/secrets/application_default_credentials.json:ro
     environment:
       <<: *langfuse-common-env
       NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-devnextauthsecretchangeme}
