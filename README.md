@@ -123,7 +123,7 @@ On each push / pull request to `main`, `master`, or `develop` it runs:
 
 1. **Ruff** — lint and format check (`app`, `streamlit_app.py`, `tests`)
 2. **pip-audit** — known vulnerabilities in `requirements.txt`
-3. **Pytest + coverage** — tests with `coverage.xml` for SonarCloud
+3. **Pytest + coverage** — tests with `coverage.xml` for SonarCloud (**minimum 80%** line coverage on `app`, see `fail_under` in `pyproject.toml`)
 4. **SonarCloud** — static analysis and coverage upload (needs secrets below)
 5. **Dependency review** — GitHub dependency review on pull requests (needs GitHub feature availability for your account)
 

@@ -1,0 +1,29 @@
+---
+description: Keep Python test coverage for app code at 80% or higher
+alwaysApply: true
+---
+
+# Test coverage (≥80%)
+
+Coverage is measured for the **`app`** package (`pytest --cov=app`). When you add or change behavior under `app/`, keep **total coverage at 80% or higher** so CI and Sonar stay healthy.
+
+## Before finishing a task
+
+1. Run tests with a report:
+
+   ```bash
+   pytest --cov=app --cov-report=term-missing --cov-report=xml
+   ```
+
+2. If coverage drops below **80%**, add or extend tests in `tests/` for real branches (not trivial asserts). Prefer testing `app` modules you touched.
+3. Do not silence gaps with broad `# pragma: no cover` unless there is a strong reason (e.g. `if TYPE_CHECKING:` is already excluded in `[tool.coverage.report]` in `pyproject.toml`).
+
+## Optional hard gate
+
+To fail CI locally when under threshold, add to `[tool.coverage.report]` in `pyproject.toml`:
+
+```toml
+fail_under = 80
+```
+
+Only add `fail_under` in a dedicated change if the team wants CI to enforce the number automatically.
