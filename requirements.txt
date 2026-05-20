@@ -14,3 +14,8 @@ langfuse>=2.0.0,<3.0.0
 # App utilities
 pydantic-settings>=2.6.0
 pandas>=2.2.0
+
+# Phase 2 — NL SQL + charts (DuckDB over CSVs, Seaborn)
+duckdb>=1.1.0
+matplotlib>=3.9.0
+seaborn>=0.13.0

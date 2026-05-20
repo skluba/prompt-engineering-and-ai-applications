@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.config import get_settings
-from app.llm import _extract_json_payload, generate_json, generate_text
+from app.llm import _extract_json_payload, generate_json, generate_text, generate_text_stream
 from app.tracing import LangfuseTraceContext
 
 
@@ -29,6 +29,91 @@ class _FakeModels:
 class _FakeClient:
     def __init__(self, text: str) -> None:
         self.models = _FakeModels(text)
+
+
+def test_generate_text_stream_yields_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj")
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "")
+    get_settings.cache_clear()
+    settings = get_settings()
+
+    class _Chunk:
+        def __init__(self, t: str) -> None:
+            self.text = t
+
+    class _StreamModels:
+        def generate_content_stream(self, **_kwargs):
+            yield _Chunk("hel")
+            yield _Chunk("lo")
+
+    fake = MagicMock()
+    fake.models = _StreamModels()
+    with patch("app.llm.genai.Client", return_value=fake):
+        parts = list(generate_text_stream(settings, "hi"))
+    assert parts == ["hel", "lo"]
+
+
+def test_generate_text_stream_langfuse_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj")
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk")
+    get_settings.cache_clear()
+    settings = get_settings()
+
+    gen = MagicMock()
+    trace = MagicMock()
+    trace.generation.return_value = gen
+    lf = MagicMock()
+    lf.trace.return_value = trace
+
+    class _Chunk:
+        text = "x"
+
+    class _StreamModels:
+        def generate_content_stream(self, **_kwargs):
+            yield _Chunk()
+
+    client = MagicMock()
+    client.models = _StreamModels()
+    with (
+        patch("app.llm.genai.Client", return_value=client),
+        patch("app.llm.get_langfuse", return_value=lf),
+        patch("app.llm.usage_details_from_genai_response", return_value={"input": 1}),
+    ):
+        parts = list(generate_text_stream(settings, "stream this"))
+    assert parts == ["x"]
+    gen.end.assert_called_once()
+    lf.flush.assert_called()
+
+
+def test_generate_text_stream_langfuse_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj")
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk")
+    get_settings.cache_clear()
+    settings = get_settings()
+
+    gen = MagicMock()
+    trace = MagicMock()
+    trace.generation.return_value = gen
+    lf = MagicMock()
+    lf.trace.return_value = trace
+
+    class _Boom:
+        def generate_content_stream(self, **_kwargs):
+            raise RuntimeError("stream fail")
+
+    client = MagicMock()
+    client.models = _Boom()
+    with (
+        patch("app.llm.genai.Client", return_value=client),
+        patch("app.llm.get_langfuse", return_value=lf),
+    ):
+        with pytest.raises(RuntimeError, match="stream fail"):
+            list(generate_text_stream(settings, "x"))
+    gen.end.assert_called_with(level="ERROR", status_message="stream fail")
+    lf.flush.assert_called()
 
 
 def test_generate_text_requires_vertex(monkeypatch: pytest.MonkeyPatch) -> None:

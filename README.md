@@ -57,7 +57,18 @@ The Streamlit app includes a **Data Generation** mode (sidebar) that:
 3. Shows a **preview per table**; each table has a feedback box and **Submit** to refine that table with the model.
 4. **Save dataset to disk** writes CSVs + `manifest.json` under **`data/generated/<dataset_id>/`** (gitignored contents; the folder is kept via `data/generated/.gitkeep`). A **ZIP download** is offered from the same save action.
 
-Use **Talk to your data** in the sidebar to browse saved datasets (CSV previews). Generic Gemini chat there does not yet query the CSVs; that is planned for a later phase.
+Use **Talk to your data** in the sidebar to pick a saved dataset, ask questions in natural language, and get **DuckDB** `SELECT` / `WITH` queries (joins and aggregates supported), **tabular results**, **streaming** Gemini explanations, optional **SQL editing** + re-run, and **Seaborn** charts when the model proposes a chart spec.
+
+## Phase 2: Chat with your data
+
+The **Talk to your data** tab provides:
+
+1. **Conversation UI** — chat history plus **streamed** assistant answers (`generate_content_stream` via `app/llm.generate_text_stream`).
+2. **NL → SQL** — Gemini returns structured JSON (SQL + optional chart spec); queries run in **read-only** mode against CSVs in `data/generated/<id>/` using **DuckDB** in-memory views. The UI shows the **SQL** and **result table**.
+3. **Optional SQL edits** — expand **Edit & re-run SQL**, change the statement, and run it again (still guarded to a single `SELECT` / `WITH`).
+4. **Charts** — when the plan includes a chart, **Seaborn** renders a PNG shown in the chat.
+
+Dependencies: `duckdb`, `matplotlib`, `seaborn` (see `requirements.txt`).
 
 ## Docker (app + database)
 
@@ -156,7 +167,7 @@ If you ever expose a token in chat or a commit, **revoke it in SonarCloud** and 
 | `app/tracing.py` | Langfuse trace context + GenAI usage mapping |
 | `app/llm.py` | Gemini / Vertex generation + Langfuse generations |
 | `app/schema_ddl.py` | DDL parsing for synthetic generation (CREATE TABLE, FKs) |
-| `app/synthetic/` | Generate, validate, persist CSV/ZIP datasets under `data/generated/` |
+| `app/chat_with_data/` | DuckDB over CSVs, read-only SQL guard, NL→SQL prompt, Seaborn charts |
 | `app/observability.py` | Langfuse client factory |
 | `.cursor/skills/langfuse/` | Langfuse Cursor skill (docs + CLI guidance) |
 | `streamlit_app.py` | Streamlit: data generation + dataset browser + chat |
