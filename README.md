@@ -132,7 +132,7 @@ Local parity:
 ```bash
 pip install -r requirements.txt -r requirements-dev.txt
 ruff check app streamlit_app.py tests && ruff format --check app streamlit_app.py tests
-pytest --cov=app --cov-report=xml --cov-report=term-missing
+pytest --cov=app --cov=streamlit_app --cov-report=xml --cov-report=term-missing
 ```
 
 ## SonarCloud
