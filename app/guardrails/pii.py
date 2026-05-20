@@ -28,9 +28,7 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str, str], ...] = (
         "email",
     ),
     (
-        re.compile(
-            r"\b(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b"
-        ),
+        re.compile(r"\b(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b"),
         "[PHONE_REDACTED]",
         "phone",
     ),

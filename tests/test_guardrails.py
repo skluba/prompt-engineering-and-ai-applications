@@ -64,8 +64,7 @@ def test_apply_chat_guardrails_blocks_injection() -> None:
 
 def test_apply_chat_guardrails_blocks_topic() -> None:
     msg = (
-        "Please elaborate on purely fictional dragons in a medieval fantasy setting. "
-        * 6
+        "Please elaborate on purely fictional dragons in a medieval fantasy setting. " * 6
     ).strip()
     with pytest.raises(GuardrailViolation) as ei:
         apply_chat_guardrails(msg, table_names=["sales"])
