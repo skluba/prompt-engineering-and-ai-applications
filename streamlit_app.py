@@ -476,9 +476,7 @@ def render_talk_to_data(settings: Settings) -> None:
                     streamed = _ttd_display_streaming_assistant(
                         settings, prepared, show_plan_caption=True
                     )
-                    st.session_state.ttd_messages.append(
-                        _ttd_assistant_record(streamed, prepared)
-                    )
+                    st.session_state.ttd_messages.append(_ttd_assistant_record(streamed, prepared))
             except Exception as err:  # noqa: BLE001
                 st.exception(err)
     elif q and not settings.vertex_configured():
