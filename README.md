@@ -48,6 +48,17 @@ Python stack for a **Streamlit** app that calls **Gemini 2.0 Flash** on **Vertex
 
    Open [http://localhost:8501](http://localhost:8501).
 
+## Phase 1: Synthetic data generation
+
+The Streamlit app includes a **Data Generation** mode (sidebar) that:
+
+1. Accepts a DDL file (`.sql`, `.txt`, or `.ddl`) or pasted DDL text — sample schemas live in the repo root (`company_employee_schema.ddl`, `library_mgm_schema.ddl`, `restrurants_schema.ddl`).
+2. Lets you add free-text instructions, set **temperature**, and click **Generate** to produce JSON rows per table via **Gemini on Vertex**; results are validated for NOT NULL, PK/unique, ENUM literals, and foreign keys.
+3. Shows a **preview per table**; each table has a feedback box and **Submit** to refine that table with the model.
+4. **Save dataset to disk** writes CSVs + `manifest.json` under **`data/generated/<dataset_id>/`** (gitignored contents; the folder is kept via `data/generated/.gitkeep`). A **ZIP download** is offered from the same save action.
+
+Use **Talk to your data** in the sidebar to browse saved datasets (CSV previews). Generic Gemini chat there does not yet query the CSVs; that is planned for a later phase.
+
 ## Docker (app + database)
 
 Compose sets **`DATABASE_URL`** for the `app` service and, by default, bind-mounts **Application Default Credentials** from  
@@ -112,7 +123,7 @@ On each push / pull request to `main`, `master`, or `develop` it runs:
 
 1. **Ruff** — lint and format check (`app`, `streamlit_app.py`, `tests`)
 2. **pip-audit** — known vulnerabilities in `requirements.txt`
-3. **Pytest + coverage** — tests with `coverage.xml` for SonarCloud
+3. **Pytest + coverage** — tests with `coverage.xml` for SonarCloud (**minimum 80%** line coverage on `app`, see `fail_under` in `pyproject.toml`)
 4. **SonarCloud** — static analysis and coverage upload (needs secrets below)
 5. **Dependency review** — GitHub dependency review on pull requests (needs GitHub feature availability for your account)
 
@@ -121,7 +132,7 @@ Local parity:
 ```bash
 pip install -r requirements.txt -r requirements-dev.txt
 ruff check app streamlit_app.py tests && ruff format --check app streamlit_app.py tests
-pytest --cov=app --cov-report=xml --cov-report=term-missing
+pytest --cov=app --cov=streamlit_app --cov-report=xml --cov-report=term-missing
 ```
 
 ## SonarCloud
@@ -143,9 +154,11 @@ If you ever expose a token in chat or a commit, **revoke it in SonarCloud** and 
 | `app/db.py` | SQLAlchemy + PostgreSQL helper |
 | `app/tracing.py` | Langfuse trace context + GenAI usage mapping |
 | `app/llm.py` | Gemini / Vertex generation + Langfuse generations |
+| `app/schema_ddl.py` | DDL parsing for synthetic generation (CREATE TABLE, FKs) |
+| `app/synthetic/` | Generate, validate, persist CSV/ZIP datasets under `data/generated/` |
 | `app/observability.py` | Langfuse client factory |
 | `.cursor/skills/langfuse/` | Langfuse Cursor skill (docs + CLI guidance) |
-| `streamlit_app.py` | Streamlit chat shell |
+| `streamlit_app.py` | Streamlit: data generation + dataset browser + chat |
 | `docker-compose.yml` | `db` + `app`; includes Langfuse stack |
 | `docker-compose.langfuse.yml` | Self-hosted Langfuse v3 (`lf-*` services) |
 | `Dockerfile` | Production-style app image |

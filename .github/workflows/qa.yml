@@ -50,7 +50,7 @@ jobs:
 
       - name: Pytest with coverage
         run: |
-          pytest --cov=app --cov-report=xml --cov-report=term-missing
+          pytest --cov=app --cov=streamlit_app --cov-report=xml --cov-report=term-missing
 
       - name: SonarCloud scan
         # Pinned tag v5.0.0 (verify at https://github.com/SonarSource/sonarqube-scan-action/releases)
