@@ -52,3 +52,7 @@ htmlcov/
 # Sonar / local scanners
 .scannerwork/
 .sonar/
+
+# Generated synthetic datasets (keep directory via .gitkeep)
+data/generated/*
+!data/generated/.gitkeep
