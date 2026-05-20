@@ -391,6 +391,11 @@ def render_talk_to_data(settings: Settings) -> None:
         st.session_state.get("ttd_messages", [])
     )
 
+    # Must run before ``st.text_area(..., key="ttd_sql_editor")`` — widget keys cannot be
+    # assigned after the widget is instantiated on the same script run.
+    if "ttd_pending_editor_sql" in st.session_state:
+        st.session_state.ttd_sql_editor = st.session_state.pop("ttd_pending_editor_sql")
+
     for m in st.session_state.ttd_messages:
         role = m.get("role", "assistant")
         with st.chat_message(role):
@@ -416,7 +421,7 @@ def render_talk_to_data(settings: Settings) -> None:
                 st.session_state.ttd_messages = []
                 st.session_state.ttd_last_sql = ""
                 st.session_state.ttd_last_chart_spec = None
-                st.session_state.ttd_sql_editor = ""
+                st.session_state.ttd_pending_editor_sql = ""
                 st.rerun()
 
     if run_edited and not settings.vertex_configured():
@@ -472,11 +477,12 @@ def render_talk_to_data(settings: Settings) -> None:
                 else:
                     st.session_state.ttd_last_sql = prepared.sql
                     st.session_state.ttd_last_chart_spec = prepared.chart_spec
-                    st.session_state.ttd_sql_editor = prepared.sql
+                    st.session_state.ttd_pending_editor_sql = prepared.sql
                     streamed = _ttd_display_streaming_assistant(
                         settings, prepared, show_plan_caption=True
                     )
                     st.session_state.ttd_messages.append(_ttd_assistant_record(streamed, prepared))
+                    st.rerun()
             except Exception as err:  # noqa: BLE001
                 st.exception(err)
     elif q and not settings.vertex_configured():
