@@ -15,6 +15,7 @@ from sqlalchemy.engine import Engine
 from app.chat_with_data import PreparedTurn, prepare_sql_only, prepare_turn
 from app.config import Settings, get_settings
 from app.db import check_connection, get_engine
+from app.guardrails import GuardrailViolation, apply_chat_guardrails, mask_pii_in_text
 from app.llm import generate_text_stream
 from app.schema_ddl import parse_ddl
 from app.synthetic.generate import generate_full_dataset, persist_and_zip, refine_table
@@ -301,6 +302,11 @@ def _normalize_ttd_messages(raw: list[Any]) -> list[dict[str, Any]]:
     return out
 
 
+def _dataset_csv_stems(dataset_path: Path) -> list[str]:
+    """Table/csv stems for topic guardrails (same files DuckDB loads)."""
+    return sorted(p.stem for p in dataset_path.glob("*.csv"))
+
+
 def _table_preview_records(df: pd.DataFrame, max_rows: int = 500) -> dict[str, Any] | None:
     if df.empty:
         return {"columns": list(df.columns), "rows": []}
@@ -365,6 +371,107 @@ def _ttd_assistant_record(streamed: str, prepared: PreparedTurn) -> dict[str, An
     }
 
 
+def _ttd_try_run_edited_sql(settings: Settings, path: Path, *, run_edited: bool) -> None:
+    if not run_edited:
+        return
+    if not settings.vertex_configured():
+        st.warning("Configure Vertex (GCP project) to run SQL.")
+        return
+    sql_edit = str(st.session_state.get("ttd_sql_editor", "")).strip()
+    if not sql_edit:
+        st.warning("Enter SQL before running.")
+        return
+    spec = st.session_state.get("ttd_last_chart_spec")
+    if not isinstance(spec, dict):
+        spec = None
+    pii_sql = mask_pii_in_text(sql_edit)
+    sql_for_model = pii_sql.text
+    if pii_sql.labels:
+        st.caption(f"PII-like literals in SQL were masked ({', '.join(pii_sql.labels)}).")
+    with st.spinner("Running your SQL…"):
+        try:
+            prepared = prepare_sql_only(path, sql_for_model, chart_spec=spec)
+            if prepared.error:
+                st.error(prepared.error)
+            else:
+                st.session_state.ttd_last_sql = prepared.sql
+                streamed = _ttd_display_streaming_assistant(settings, prepared)
+                st.session_state.ttd_messages.append(_ttd_assistant_record(streamed, prepared))
+        except Exception as err:  # noqa: BLE001
+            st.exception(err)
+
+
+def _ttd_refuse_guardrail(gv: GuardrailViolation, q: str) -> None:
+    if gv.code == "injection":
+        with st.chat_message("user"):
+            st.caption("Message blocked by safety guardrails.")
+    else:
+        with st.chat_message("user"):
+            st.markdown(q)
+        st.session_state.ttd_messages.append({"role": "user", "text": q})
+    with st.chat_message("assistant"):
+        st.markdown(gv.user_message)
+    st.session_state.ttd_messages.append({"role": "assistant", "text": gv.user_message})
+
+
+def _ttd_run_nl_turn(settings: Settings, path: Path, q: str) -> None:
+    table_stems = _dataset_csv_stems(path)
+    try:
+        safe_q, gr = apply_chat_guardrails(q, table_names=table_stems)
+    except GuardrailViolation as gv:
+        _ttd_refuse_guardrail(gv, q)
+        return
+    prior_messages = list(st.session_state.ttd_messages)
+    with st.chat_message("user"):
+        st.markdown(q)
+    if gr.pii_labels:
+        st.caption(
+            "PII-like patterns were masked in the text sent to the model: "
+            + ", ".join(gr.pii_labels)
+        )
+    with st.spinner("Planning SQL and executing…"):
+        try:
+            prepared = prepare_turn(
+                settings,
+                path,
+                prior_messages,
+                safe_q,
+                trace_json=_langfuse_nl_sql_context(settings),
+            )
+            user_record: dict[str, Any] = {
+                "role": "user",
+                "text": safe_q,
+                "display_text": q,
+            }
+            if prepared.error:
+                st.session_state.ttd_messages = prior_messages + [
+                    user_record,
+                    {
+                        "role": "assistant",
+                        "text": f"**Could not complete the request.**\n\n{prepared.error}",
+                        "sql": None,
+                        "table_preview": None,
+                        "chart_png_b64": None,
+                        "chart_spec": None,
+                    },
+                ]
+                st.error(prepared.error)
+            else:
+                st.session_state.ttd_last_sql = prepared.sql
+                st.session_state.ttd_last_chart_spec = prepared.chart_spec
+                st.session_state.ttd_pending_editor_sql = prepared.sql
+                streamed = _ttd_display_streaming_assistant(
+                    settings, prepared, show_plan_caption=True
+                )
+                st.session_state.ttd_messages = prior_messages + [
+                    user_record,
+                    _ttd_assistant_record(streamed, prepared),
+                ]
+                st.rerun()
+        except Exception as err:  # noqa: BLE001
+            st.exception(err)
+
+
 def render_talk_to_data(settings: Settings) -> None:
     st.header("Talk to your data")
     st.caption(
@@ -387,6 +494,10 @@ def render_talk_to_data(settings: Settings) -> None:
             st.dataframe(pd.read_csv(f), use_container_width=True)
 
     st.subheader("Chat")
+    st.caption(
+        "Guardrails: prompt-injection phrases, obvious off-topic requests, and common PII "
+        "patterns are filtered or masked before the model sees your text."
+    )
     st.session_state.ttd_messages = _normalize_ttd_messages(
         st.session_state.get("ttd_messages", [])
     )
@@ -400,7 +511,7 @@ def render_talk_to_data(settings: Settings) -> None:
         role = m.get("role", "assistant")
         with st.chat_message(role):
             if role == "user":
-                st.markdown(m.get("text", ""))
+                st.markdown(m.get("display_text", m.get("text", "")))
             else:
                 _render_ttd_assistant_message(m)
 
@@ -424,69 +535,15 @@ def render_talk_to_data(settings: Settings) -> None:
                 st.session_state.ttd_pending_editor_sql = ""
                 st.rerun()
 
-    if run_edited and not settings.vertex_configured():
-        st.warning("Configure Vertex (GCP project) to run SQL.")
-    elif run_edited and settings.vertex_configured():
-        sql_edit = str(st.session_state.get("ttd_sql_editor", "")).strip()
-        if not sql_edit:
-            st.warning("Enter SQL before running.")
-        else:
-            spec = st.session_state.get("ttd_last_chart_spec")
-            if not isinstance(spec, dict):
-                spec = None
-            with st.spinner("Running your SQL…"):
-                try:
-                    prepared = prepare_sql_only(path, sql_edit, chart_spec=spec)
-                    if prepared.error:
-                        st.error(prepared.error)
-                    else:
-                        st.session_state.ttd_last_sql = prepared.sql
-                        streamed = _ttd_display_streaming_assistant(settings, prepared)
-                        st.session_state.ttd_messages.append(
-                            _ttd_assistant_record(streamed, prepared)
-                        )
-                except Exception as err:  # noqa: BLE001
-                    st.exception(err)
+    _ttd_try_run_edited_sql(settings, path, run_edited=run_edited)
 
     q = st.chat_input("Ask about this dataset in natural language…")
-    if q and settings.vertex_configured():
-        st.session_state.ttd_messages.append({"role": "user", "text": q})
-        with st.chat_message("user"):
-            st.markdown(q)
-        with st.spinner("Planning SQL and executing…"):
-            try:
-                prepared = prepare_turn(
-                    settings,
-                    path,
-                    st.session_state.ttd_messages,
-                    q,
-                    trace_json=_langfuse_nl_sql_context(settings),
-                )
-                if prepared.error:
-                    st.session_state.ttd_messages.append(
-                        {
-                            "role": "assistant",
-                            "text": f"**Could not complete the request.**\n\n{prepared.error}",
-                            "sql": None,
-                            "table_preview": None,
-                            "chart_png_b64": None,
-                            "chart_spec": None,
-                        }
-                    )
-                    st.error(prepared.error)
-                else:
-                    st.session_state.ttd_last_sql = prepared.sql
-                    st.session_state.ttd_last_chart_spec = prepared.chart_spec
-                    st.session_state.ttd_pending_editor_sql = prepared.sql
-                    streamed = _ttd_display_streaming_assistant(
-                        settings, prepared, show_plan_caption=True
-                    )
-                    st.session_state.ttd_messages.append(_ttd_assistant_record(streamed, prepared))
-                    st.rerun()
-            except Exception as err:  # noqa: BLE001
-                st.exception(err)
-    elif q and not settings.vertex_configured():
+    if not q:
+        return
+    if not settings.vertex_configured():
         st.warning("Configure Vertex (GCP project) to use chat-with-data.")
+        return
+    _ttd_run_nl_turn(settings, path, q)
 
 
 def main() -> None:

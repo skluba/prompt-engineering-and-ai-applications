@@ -252,6 +252,13 @@ def test_normalize_ttd_messages_tuple_and_dict(mock_st: MagicMock) -> None:
     assert out[1]["sql"] == "SELECT 1"
 
 
+def test_dataset_csv_stems(tmp_path: Path) -> None:
+    (tmp_path / "a.csv").write_text("x\n1\n", encoding="utf-8")
+    (tmp_path / "b.csv").write_text("y\n2\n", encoding="utf-8")
+    (tmp_path / "note.txt").write_text("n", encoding="utf-8")
+    assert streamlit_app._dataset_csv_stems(tmp_path) == ["a", "b"]
+
+
 def test_table_preview_records_truncates(mock_st: MagicMock) -> None:
     prev = streamlit_app._table_preview_records(pd.DataFrame({"a": [1, 2, 3]}), max_rows=2)
     assert len(prev["rows"]) == 2

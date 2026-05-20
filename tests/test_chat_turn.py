@@ -80,6 +80,42 @@ def test_prepare_turn_passes_conversation_history(
     assert "second question" in captured.get("prompt", "")
 
 
+def test_prepare_turn_history_uses_model_facing_user_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Prior user lines in the prompt use ``text`` (e.g. PII-masked), not ``display_text``."""
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj")
+    get_settings.cache_clear()
+    (tmp_path / "t.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+    settings = get_settings()
+    captured: dict = {}
+
+    def fake_json(_settings, prompt: str, **_kwargs):
+        captured["prompt"] = prompt
+        return {
+            "assistant_message": "ok",
+            "sql": "SELECT SUM(b) AS s FROM t",
+            "chart": {"kind": "none"},
+        }
+
+    with patch("app.chat_with_data.turn.generate_json", side_effect=fake_json):
+        prepare_turn(
+            settings,
+            tmp_path,
+            [
+                {
+                    "role": "user",
+                    "text": "reach me at [EMAIL_REDACTED]",
+                    "display_text": "reach me at x@y.com",
+                },
+            ],
+            "next",
+            trace_json=LangfuseTraceContext(),
+        )
+    assert "[EMAIL_REDACTED]" in captured.get("prompt", "")
+    assert "x@y.com" not in captured.get("prompt", "")
+
+
 def test_prepare_sql_only_runs_guarded_query(tmp_path: Path) -> None:
     (tmp_path / "t.csv").write_text("x\n1\n2\n", encoding="utf-8")
     out = prepare_sql_only(tmp_path, "SELECT COUNT(*) AS c FROM t", chart_spec=None)

@@ -67,6 +67,7 @@ The **Talk to your data** tab provides:
 2. **NL → SQL** — Gemini returns structured JSON (SQL + optional chart spec); queries run in **read-only** mode against CSVs in `data/generated/<id>/` using **DuckDB** in-memory views. The UI shows the **SQL** and **result table**.
 3. **Optional SQL edits** — expand **Edit & re-run SQL**, change the statement, and run it again (still guarded to a single `SELECT` / `WITH`).
 4. **Charts** — when the plan includes a chart, **Seaborn** renders a PNG shown in the chat.
+5. **Guardrails** — before any NL turn hits the model, `app.guardrails` runs lightweight checks: **prompt-injection / jailbreak** phrases are blocked with a refusal, **off-topic** long messages (with no data/table signals) are steered back to dataset questions, and **PII-shaped** substrings (emails, phones, SSN- and card-like patterns) are **masked** in the text sent to Gemini. The chat UI still shows what you typed; optional SQL re-run masks literals the same way.
 
 Dependencies: `duckdb`, `matplotlib`, `seaborn` (see `requirements.txt`).
 
