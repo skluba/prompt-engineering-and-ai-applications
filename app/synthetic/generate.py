@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.config import Settings
 from app.llm import generate_json
 from app.schema_ddl import ParsedSchema, parse_ddl
+from app.synthetic.pg_storage import save_synthetic_dataset_to_postgres
 from app.synthetic.storage import DEFAULT_DATA_ROOT, save_dataset, zip_dataset
 from app.synthetic.validate import validate_tables_data
 from app.tracing import LangfuseTraceContext
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Engine
 
 
 def build_full_generation_prompt(
@@ -158,7 +162,10 @@ def persist_and_zip(
     rows_per_table: int,
     temperature: float,
     data_root: Path = DEFAULT_DATA_ROOT,
-) -> tuple[Path, bytes]:
+    postgres_engine: Engine | None = None,
+    mirror_to_postgres: bool = False,
+) -> tuple[Path, bytes, bool]:
+    """Persist dataset to disk; optionally mirror to Postgres. Third value is Postgres OK."""
     folder = save_dataset(
         data_root=data_root,
         dataset_id=dataset_id,
@@ -168,4 +175,20 @@ def persist_and_zip(
         rows_per_table=rows_per_table,
         temperature=temperature,
     )
-    return folder, zip_dataset(folder)
+    zbytes = zip_dataset(folder)
+    pg_ok = False
+    if mirror_to_postgres and postgres_engine is not None:
+        try:
+            save_synthetic_dataset_to_postgres(
+                postgres_engine,
+                dataset_key=dataset_id,
+                tables=tables,
+                ddl=ddl,
+                instructions=instructions,
+                rows_per_table=rows_per_table,
+                temperature=temperature,
+            )
+            pg_ok = True
+        except Exception:
+            pg_ok = False
+    return folder, zbytes, pg_ok

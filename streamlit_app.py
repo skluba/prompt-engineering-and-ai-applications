@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import io
+import tempfile
 import uuid
 from pathlib import Path
 from typing import Any
@@ -18,7 +19,8 @@ from app.db import check_connection, get_engine
 from app.llm import generate_text_stream
 from app.schema_ddl import parse_ddl
 from app.synthetic.generate import generate_full_dataset, persist_and_zip, refine_table
-from app.synthetic.storage import DEFAULT_DATA_ROOT, list_datasets
+from app.synthetic.pg_storage import list_all_datasets, materialize_postgres_dataset_to_folder
+from app.synthetic.storage import DEFAULT_DATA_ROOT
 from app.synthetic.validate import validate_tables_data
 from app.tracing import LangfuseTraceContext
 
@@ -39,6 +41,10 @@ def _env_sidebar(settings: Settings) -> None:
         st.warning(
             "Set `GOOGLE_CLOUD_PROJECT` and authenticate with Application Default "
             "Credentials (e.g. `gcloud auth application-default login`)."
+        )
+    if settings.synthetic_postgres_mirror:
+        st.caption(
+            "Synthetic datasets: **PostgreSQL mirror** on save (`SYNTHETIC_POSTGRES_MIRROR`)."
         )
     if not (settings.langfuse_public_key and settings.langfuse_secret_key):
         st.info("Langfuse keys unset — tracing disabled until `LANGFUSE_*` is configured.")
@@ -218,11 +224,13 @@ def _syn_render_table_expanders(settings: Settings, schema, temperature: float) 
             _syn_try_refine_table(settings, schema, tname, feedback, temperature)
 
 
-def _syn_save_and_download(rows_n: int, temperature: float) -> None:
+def _syn_save_and_download(settings: Settings, rows_n: int, temperature: float) -> None:
     did = st.session_state.syn_dataset_id or str(uuid.uuid4())
+    engine = db_engine()
+    mirror = bool(settings.synthetic_postgres_mirror and check_connection(engine))
     if st.button("Save dataset to disk & prepare download"):
         try:
-            folder, zbytes = persist_and_zip(
+            folder, zbytes, pg_ok = persist_and_zip(
                 dataset_id=did,
                 tables=st.session_state.syn_data,
                 ddl=st.session_state.syn_ddl,
@@ -230,10 +238,21 @@ def _syn_save_and_download(rows_n: int, temperature: float) -> None:
                 rows_per_table=int(rows_n),
                 temperature=float(temperature),
                 data_root=DEFAULT_DATA_ROOT,
+                postgres_engine=engine if mirror else None,
+                mirror_to_postgres=mirror,
             )
             st.session_state.syn_dataset_id = did
             st.session_state.syn_zip = zbytes
             st.success(f"Saved under `{folder.resolve()}`.")
+            if settings.synthetic_postgres_mirror:
+                if pg_ok:
+                    st.info("Dataset mirrored to PostgreSQL (`app_synthetic_*` tables).")
+                elif check_connection(engine):
+                    st.warning(
+                        "Saved to disk, but PostgreSQL mirror failed (check DB logs / permissions)."
+                    )
+                else:
+                    st.warning("PostgreSQL mirror skipped: database not reachable.")
         except Exception as err:  # noqa: BLE001
             st.exception(err)
 
@@ -285,7 +304,7 @@ def render_data_generation(settings: Settings) -> None:
     schema = parse_ddl(st.session_state.syn_ddl)
     st.subheader("Table previews & refinement")
     _syn_render_table_expanders(settings, schema, temperature)
-    _syn_save_and_download(rows_n, temperature)
+    _syn_save_and_download(settings, rows_n, temperature)
 
 
 def _normalize_ttd_messages(raw: list[Any]) -> list[dict[str, Any]]:
@@ -365,6 +384,14 @@ def _ttd_assistant_record(streamed: str, prepared: PreparedTurn) -> dict[str, An
     }
 
 
+def _ttd_resolve_dataset_path(engine: Engine, meta: dict[str, Any]) -> Path:
+    if meta.get("_storage") == "postgres":
+        key = str(meta.get("_dataset_key") or meta.get("dataset_id", ""))
+        dest = Path(tempfile.gettempdir()) / "streamlit_synthetic_ds" / key
+        return materialize_postgres_dataset_to_folder(engine, key, dest)
+    return Path(meta["_path"])
+
+
 def render_talk_to_data(settings: Settings) -> None:
     st.header("Talk to your data")
     st.caption(
@@ -373,15 +400,24 @@ def render_talk_to_data(settings: Settings) -> None:
     )
     root = DEFAULT_DATA_ROOT
     root.mkdir(parents=True, exist_ok=True)
-    datasets = list_datasets(root)
+    engine = db_engine()
+    include_pg = check_connection(engine)
+    datasets = list_all_datasets(root, engine, include_postgres=include_pg)
     if not datasets:
-        st.write(f"No datasets yet under `{root.resolve()}`. Generate and save data first.")
+        st.write(
+            f"No datasets yet. Save from **Data Generation** (under `{root.resolve()}`) "
+            "or store datasets in PostgreSQL when mirror is enabled and the DB is reachable."
+        )
         return
-    labels = [f"{d.get('dataset_id', '?')} — {str(d.get('created_at', ''))[:19]}" for d in datasets]
+    labels = [
+        f"{d.get('dataset_id', '?')} — {str(d.get('created_at', ''))[:19]} "
+        f"({d.get('_storage', 'filesystem')})"
+        for d in datasets
+    ]
     idx = st.selectbox("Dataset", range(len(labels)), format_func=lambda i: labels[i])
     meta = datasets[idx]
-    path = Path(meta["_path"])
-    st.json({k: v for k, v in meta.items() if k != "_path"})
+    path = _ttd_resolve_dataset_path(engine, meta)
+    st.json({k: v for k, v in meta.items() if k not in ("_path",)})
     for f in sorted(path.glob("*.csv")):
         with st.expander(f.name):
             st.dataframe(pd.read_csv(f), use_container_width=True)

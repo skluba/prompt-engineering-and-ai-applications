@@ -205,7 +205,7 @@ def test_render_talk_to_data_empty(
     monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "p")
     get_settings.cache_clear()
     with patch.object(streamlit_app, "DEFAULT_DATA_ROOT", tmp_path):
-        with patch.object(streamlit_app, "list_datasets", return_value=[]):
+        with patch.object(streamlit_app, "list_all_datasets", return_value=[]):
             streamlit_app.render_talk_to_data(get_settings())
     mock_st.write.assert_called()
 
@@ -308,11 +308,13 @@ def test_render_talk_to_data_chat_submits(
         patch.object(streamlit_app, "DEFAULT_DATA_ROOT", tmp_path),
         patch.object(
             streamlit_app,
-            "list_datasets",
+            "list_all_datasets",
             return_value=[
                 {
                     "dataset_id": "id1",
                     "_path": str(ds.resolve()),
+                    "_storage": "filesystem",
+                    "_dataset_key": "id1",
                     "created_at": "2020-01-01T00:00:00",
                 }
             ],

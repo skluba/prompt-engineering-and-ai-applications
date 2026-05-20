@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from app.config import get_settings
@@ -224,7 +226,7 @@ def test_persist_and_zip_round_trip(tmp_path, monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj")
     get_settings.cache_clear()
     tables = {"P": [{"id": 1, "name": "a"}]}
-    folder, zbuf = persist_and_zip(
+    folder, zbuf, pg_ok = persist_and_zip(
         dataset_id="rid",
         tables=tables,
         ddl="x",
@@ -236,3 +238,50 @@ def test_persist_and_zip_round_trip(tmp_path, monkeypatch: pytest.MonkeyPatch) -
     assert folder.name == "rid"
     assert (folder / "P.csv").is_file()
     assert len(zbuf) > 50
+    assert pg_ok is False
+
+
+def test_persist_and_zip_postgres_mirror_success(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj")
+    get_settings.cache_clear()
+    tables = {"P": [{"id": 1}]}
+    engine = MagicMock()
+    with patch("app.synthetic.generate.save_synthetic_dataset_to_postgres") as save_pg:
+        folder, zbuf, pg_ok = persist_and_zip(
+            dataset_id="rid",
+            tables=tables,
+            ddl="x",
+            instructions="y",
+            rows_per_table=5,
+            temperature=0.3,
+            data_root=tmp_path,
+            postgres_engine=engine,
+            mirror_to_postgres=True,
+        )
+    save_pg.assert_called_once()
+    assert pg_ok is True
+
+
+def test_persist_zip_postgres_mirror_failure_still_zips(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj")
+    get_settings.cache_clear()
+    engine = MagicMock()
+    with patch(
+        "app.synthetic.generate.save_synthetic_dataset_to_postgres",
+        side_effect=RuntimeError("db down"),
+    ):
+        folder, zbuf, pg_ok = persist_and_zip(
+            dataset_id="rid",
+            tables={"P": [{"id": 1}]},
+            ddl="x",
+            instructions="y",
+            rows_per_table=5,
+            temperature=0.3,
+            data_root=tmp_path,
+            postgres_engine=engine,
+            mirror_to_postgres=True,
+        )
+    assert len(zbuf) > 20
+    assert pg_ok is False

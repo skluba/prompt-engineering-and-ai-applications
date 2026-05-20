@@ -20,6 +20,16 @@ def test_vertex_configured_false_when_project_empty(monkeypatch: pytest.MonkeyPa
     assert s.vertex_configured() is False
 
 
+def test_settings_synthetic_postgres_mirror(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SYNTHETIC_POSTGRES_MIRROR", "true")
+    get_settings.cache_clear()
+    try:
+        assert get_settings().synthetic_postgres_mirror is True
+    finally:
+        monkeypatch.delenv("SYNTHETIC_POSTGRES_MIRROR", raising=False)
+        get_settings.cache_clear()
+
+
 def test_settings_default_model(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GEMINI_MODEL", raising=False)
     s = Settings()

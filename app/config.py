@@ -42,6 +42,15 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("DATABASE_URL", "SQLALCHEMY_DATABASE_URI"),
     )
 
+    # Synthetic datasets: also persist to PostgreSQL (see README)
+    synthetic_postgres_mirror: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "SYNTHETIC_POSTGRES_MIRROR",
+            "SYNTHETIC_MIRROR_POSTGRES",
+        ),
+    )
+
     # Langfuse (optional)
     langfuse_public_key: str = Field(default="", validation_alias="LANGFUSE_PUBLIC_KEY")
     langfuse_secret_key: str = Field(default="", validation_alias="LANGFUSE_SECRET_KEY")

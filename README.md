@@ -57,6 +57,22 @@ The Streamlit app includes a **Data Generation** mode (sidebar) that:
 3. Shows a **preview per table**; each table has a feedback box and **Submit** to refine that table with the model.
 4. **Save dataset to disk** writes CSVs + `manifest.json` under **`data/generated/<dataset_id>/`** (gitignored contents; the folder is kept via `data/generated/.gitkeep`). A **ZIP download** is offered from the same save action.
 
+### Optional: mirror datasets to PostgreSQL
+
+Set **`SYNTHETIC_POSTGRES_MIRROR=true`** in `.env` to **also** persist each saved dataset into Postgres (`app_synthetic_dataset` + `app_synthetic_dataset_table` JSONB tables). Disk export remains the source of truth for ZIP downloads; the mirror is for durability, sharing, and ops.
+
+**Benefits**
+
+- **Durability & backups**: standard DB backup/restore instead of only host volumes.
+- **Multi-instance / shared dev**: several app containers or teammates can read the same datasets if they share `DATABASE_URL`.
+- **Operational tooling**: inspect or ETL data with SQL, roles, and auditing if you extend the schema later.
+
+**Drawbacks**
+
+- **Dependency**: saving with mirror enabled expects Postgres to be up; the UI still saves to disk if the DB is down, but shows a warning if mirror fails.
+- **Heavier than files**: JSONB rows are simple but not a substitute for a fully modeled star schema without more design work.
+- **Chat path**: Phase 2 still uses **DuckDB over CSV**; Postgres-backed entries are **materialized to a temp folder** on each session when you pick them (small/medium datasets only).
+
 Use **Talk to your data** in the sidebar to pick a saved dataset, ask questions in natural language, and get **DuckDB** `SELECT` / `WITH` queries (joins and aggregates supported), **tabular results**, **streaming** Gemini explanations, optional **SQL editing** + re-run, and **Seaborn** charts when the model proposes a chart spec.
 
 ## Phase 2: Chat with your data
@@ -64,7 +80,7 @@ Use **Talk to your data** in the sidebar to pick a saved dataset, ask questions 
 The **Talk to your data** tab provides:
 
 1. **Conversation UI** — chat history plus **streamed** assistant answers (`generate_content_stream` via `app/llm.generate_text_stream`).
-2. **NL → SQL** — Gemini returns structured JSON (SQL + optional chart spec); queries run in **read-only** mode against CSVs in `data/generated/<id>/` using **DuckDB** in-memory views. The UI shows the **SQL** and **result table**.
+2. **NL → SQL** — Gemini returns structured JSON (SQL + optional chart spec); queries run in **read-only** mode against on-disk CSVs under `data/generated/<id>/` **or** against a **Postgres-backed** dataset after it is materialized to a temp CSV folder, using **DuckDB** in-memory views. The UI shows the **SQL** and **result table**.
 3. **Optional SQL edits** — expand **Edit & re-run SQL**, change the statement, and run it again (still guarded to a single `SELECT` / `WITH`).
 4. **Charts** — when the plan includes a chart, **Seaborn** renders a PNG shown in the chat.
 
@@ -168,7 +184,8 @@ If you ever expose a token in chat or a commit, **revoke it in SonarCloud** and 
 | `app/llm.py` | Gemini / Vertex generation + Langfuse generations |
 | `app/schema_ddl.py` | DDL parsing for synthetic generation (CREATE TABLE, FKs) |
 | `app/chat_with_data/` | DuckDB over CSVs, read-only SQL guard, NL→SQL prompt, Seaborn charts |
-| `app/observability.py` | Langfuse client factory |
+| `app/synthetic/` | Generate, validate, persist CSV/ZIP under `data/generated/` |
+| `app/synthetic/pg_storage.py` | Optional PostgreSQL mirror + merged dataset listing |
 | `.cursor/skills/langfuse/` | Langfuse Cursor skill (docs + CLI guidance) |
 | `streamlit_app.py` | Streamlit: data generation + dataset browser + chat |
 | `docker-compose.yml` | `db` + `app`; includes Langfuse stack |
