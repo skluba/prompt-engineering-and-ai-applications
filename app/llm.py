@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
 from google import genai
@@ -75,6 +76,66 @@ def generate_text(
         if trace is not None:
             trace.update(output=text)
         return text
+    except Exception as exc:
+        if generation is not None:
+            generation.end(level="ERROR", status_message=str(exc))
+        raise
+    finally:
+        if lf is not None:
+            lf.flush()
+
+
+def generate_text_stream(
+    settings: Settings,
+    user_prompt: str,
+    *,
+    trace_context: LangfuseTraceContext | None = None,
+) -> Iterator[str]:
+    """Yield text fragments from Gemini streaming; finish Langfuse with the full response."""
+    client = _get_client(settings)
+    lf = get_langfuse(settings)
+    trace = None
+    generation = None
+    ctx = trace_context or LangfuseTraceContext()
+    version = settings.langfuse_trace_version.strip() or None
+
+    if lf is not None:
+        meta = dict(ctx.metadata) if ctx.metadata else None
+        trace = lf.trace(
+            name=ctx.trace_name,
+            input=user_prompt if len(user_prompt) <= 8000 else f"{user_prompt[:8000]}\n…",
+            session_id=ctx.session_id,
+            user_id=ctx.user_id,
+            tags=list(ctx.tags),
+            metadata=meta,
+            version=version,
+        )
+        generation = trace.generation(
+            name=ctx.generation_name,
+            model=settings.gemini_model,
+            input=user_prompt if len(user_prompt) <= 8000 else f"{user_prompt[:8000]}\n…",
+        )
+
+    collected: list[str] = []
+    last_usage: dict[str, int] | None = None
+    try:
+        for chunk in client.models.generate_content_stream(
+            model=settings.gemini_model,
+            contents=user_prompt,
+        ):
+            last_usage = usage_details_from_genai_response(chunk) or last_usage
+            piece = getattr(chunk, "text", None) or ""
+            if piece:
+                collected.append(piece)
+                yield piece
+        full = "".join(collected).strip()
+        if generation is not None:
+            kwargs: dict = {"output": full}
+            if last_usage:
+                kwargs["usage_details"] = last_usage
+            generation.end(**kwargs)
+        if trace is not None:
+            trace.update(output=full)
     except Exception as exc:
         if generation is not None:
             generation.end(level="ERROR", status_message=str(exc))

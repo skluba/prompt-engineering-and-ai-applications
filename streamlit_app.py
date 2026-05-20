@@ -1,17 +1,21 @@
-"""Streamlit: Phase 1 synthetic data generation and dataset browser."""
+"""Streamlit: Phase 1 synthetic data generation; Phase 2 chat-with-data (NL SQL + charts)."""
 
 from __future__ import annotations
 
+import base64
+import io
 import uuid
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import streamlit as st
 from sqlalchemy.engine import Engine
 
+from app.chat_with_data import PreparedTurn, prepare_sql_only, prepare_turn
 from app.config import Settings, get_settings
 from app.db import check_connection, get_engine
-from app.llm import generate_text
+from app.llm import generate_text_stream
 from app.schema_ddl import parse_ddl
 from app.synthetic.generate import generate_full_dataset, persist_and_zip, refine_table
 from app.synthetic.storage import DEFAULT_DATA_ROOT, list_datasets
@@ -46,7 +50,7 @@ def _streamlit_session_id() -> str:
     return st.session_state.streamlit_session_id
 
 
-def _langfuse_chat_context(settings: Settings) -> LangfuseTraceContext:
+def _langfuse_nl_sql_context(settings: Settings) -> LangfuseTraceContext:
     su = getattr(st, "user", None)
     user_id: str | None = None
     if su is not None:
@@ -55,10 +59,33 @@ def _langfuse_chat_context(settings: Settings) -> LangfuseTraceContext:
             if raw is not None and str(raw).strip():
                 user_id = str(raw).strip()
                 break
-    meta = {"surface": "streamlit", "model": settings.gemini_model}
+    meta = {"surface": "streamlit-chat-with-data-json", "model": settings.gemini_model}
     return LangfuseTraceContext(
         session_id=_streamlit_session_id(),
         user_id=user_id,
+        trace_name="chat-with-data-nl-sql",
+        generation_name="gemini-nl-sql-json",
+        tags=("streamlit", "chat-with-data", "vertex-gemini"),
+        metadata=meta,
+    )
+
+
+def _langfuse_stream_context(settings: Settings) -> LangfuseTraceContext:
+    su = getattr(st, "user", None)
+    user_id: str | None = None
+    if su is not None:
+        for attr in ("email", "id", "sub"):
+            raw = getattr(su, attr, None)
+            if raw is not None and str(raw).strip():
+                user_id = str(raw).strip()
+                break
+    meta = {"surface": "streamlit-chat-with-data-stream", "model": settings.gemini_model}
+    return LangfuseTraceContext(
+        session_id=_streamlit_session_id(),
+        user_id=user_id,
+        trace_name="chat-with-data-stream",
+        generation_name="gemini-chat-stream",
+        tags=("streamlit", "chat-with-data-stream", "vertex-gemini"),
         metadata=meta,
     )
 
@@ -261,11 +288,88 @@ def render_data_generation(settings: Settings) -> None:
     _syn_save_and_download(rows_n, temperature)
 
 
+def _normalize_ttd_messages(raw: list[Any]) -> list[dict[str, Any]]:
+    if not raw:
+        return []
+    out: list[dict[str, Any]] = []
+    for item in raw:
+        if isinstance(item, dict) and "role" in item:
+            out.append(item)
+        elif isinstance(item, (list, tuple)) and len(item) == 2:
+            role, content = item[0], item[1]
+            out.append({"role": str(role), "text": str(content)})
+    return out
+
+
+def _table_preview_records(df: pd.DataFrame, max_rows: int = 500) -> dict[str, Any] | None:
+    if df.empty:
+        return {"columns": list(df.columns), "rows": []}
+    dff = df.head(max_rows)
+    return {"columns": list(dff.columns), "rows": dff.to_dict(orient="records")}
+
+
+def _render_ttd_assistant_message(m: dict[str, Any]) -> None:
+    st.markdown(m.get("text") or "")
+    sql = m.get("sql")
+    if sql:
+        st.code(sql, language="sql")
+    preview = m.get("table_preview")
+    if preview and preview.get("columns") is not None:
+        st.dataframe(
+            pd.DataFrame(preview["rows"], columns=preview["columns"]), use_container_width=True
+        )
+    b64 = m.get("chart_png_b64")
+    if b64:
+        st.image(io.BytesIO(base64.b64decode(b64)))
+
+
+def _ttd_chart_png_b64(prepared: PreparedTurn) -> str | None:
+    if not prepared.chart_png:
+        return None
+    return base64.b64encode(prepared.chart_png).decode()
+
+
+def _ttd_display_streaming_assistant(
+    settings: Settings,
+    prepared: PreparedTurn,
+    *,
+    show_plan_caption: bool = False,
+) -> str:
+    def gen() -> Any:
+        yield from generate_text_stream(
+            settings,
+            prepared.stream_prompt,
+            trace_context=_langfuse_stream_context(settings),
+        )
+
+    with st.chat_message("assistant"):
+        if show_plan_caption and prepared.plan_message:
+            st.caption(prepared.plan_message)
+        streamed = st.write_stream(gen)
+        st.code(prepared.sql, language="sql")
+        if not prepared.df.empty:
+            st.dataframe(prepared.df, use_container_width=True)
+        if prepared.chart_png:
+            st.image(io.BytesIO(prepared.chart_png))
+    return streamed or ""
+
+
+def _ttd_assistant_record(streamed: str, prepared: PreparedTurn) -> dict[str, Any]:
+    return {
+        "role": "assistant",
+        "text": streamed,
+        "sql": prepared.sql,
+        "table_preview": _table_preview_records(prepared.df),
+        "chart_png_b64": _ttd_chart_png_b64(prepared),
+        "chart_spec": prepared.chart_spec,
+    }
+
+
 def render_talk_to_data(settings: Settings) -> None:
     st.header("Talk to your data")
-    st.info(
-        "SQL + RAG over uploaded schemas is coming next. Browse saved datasets below; "
-        "optional generic Gemini chat does not query CSVs yet."
+    st.caption(
+        "Ask in plain English. The app runs DuckDB SQL on your CSVs, shows the query and table, "
+        "streams an explanation, and adds a Seaborn chart when useful."
     )
     root = DEFAULT_DATA_ROOT
     root.mkdir(parents=True, exist_ok=True)
@@ -282,21 +386,107 @@ def render_talk_to_data(settings: Settings) -> None:
         with st.expander(f.name):
             st.dataframe(pd.read_csv(f), use_container_width=True)
 
-    st.subheader("Quick chat (Gemini)")
-    if "ttd_messages" not in st.session_state:
-        st.session_state.ttd_messages = []
-    for role, content in st.session_state.ttd_messages:
+    st.subheader("Chat")
+    st.session_state.ttd_messages = _normalize_ttd_messages(
+        st.session_state.get("ttd_messages", [])
+    )
+
+    # Must run before ``st.text_area(..., key="ttd_sql_editor")`` — widget keys cannot be
+    # assigned after the widget is instantiated on the same script run.
+    if "ttd_pending_editor_sql" in st.session_state:
+        st.session_state.ttd_sql_editor = st.session_state.pop("ttd_pending_editor_sql")
+
+    for m in st.session_state.ttd_messages:
+        role = m.get("role", "assistant")
         with st.chat_message(role):
-            st.markdown(content)
-    q = st.chat_input("Ask something…")
+            if role == "user":
+                st.markdown(m.get("text", ""))
+            else:
+                _render_ttd_assistant_message(m)
+
+    run_edited = False
+    with st.expander("Edit & re-run SQL (optional)", expanded=False):
+        st.session_state.setdefault("ttd_sql_editor", st.session_state.get("ttd_last_sql", ""))
+        st.text_area(
+            "Modify the last query or write your own (SELECT / WITH only).",
+            height=160,
+            key="ttd_sql_editor",
+            label_visibility="collapsed",
+        )
+        c1, c2 = st.columns(2)
+        with c1:
+            run_edited = st.button("Run edited SQL", type="secondary")
+        with c2:
+            if st.button("Clear chat history"):
+                st.session_state.ttd_messages = []
+                st.session_state.ttd_last_sql = ""
+                st.session_state.ttd_last_chart_spec = None
+                st.session_state.ttd_pending_editor_sql = ""
+                st.rerun()
+
+    if run_edited and not settings.vertex_configured():
+        st.warning("Configure Vertex (GCP project) to run SQL.")
+    elif run_edited and settings.vertex_configured():
+        sql_edit = str(st.session_state.get("ttd_sql_editor", "")).strip()
+        if not sql_edit:
+            st.warning("Enter SQL before running.")
+        else:
+            spec = st.session_state.get("ttd_last_chart_spec")
+            if not isinstance(spec, dict):
+                spec = None
+            with st.spinner("Running your SQL…"):
+                try:
+                    prepared = prepare_sql_only(path, sql_edit, chart_spec=spec)
+                    if prepared.error:
+                        st.error(prepared.error)
+                    else:
+                        st.session_state.ttd_last_sql = prepared.sql
+                        streamed = _ttd_display_streaming_assistant(settings, prepared)
+                        st.session_state.ttd_messages.append(
+                            _ttd_assistant_record(streamed, prepared)
+                        )
+                except Exception as err:  # noqa: BLE001
+                    st.exception(err)
+
+    q = st.chat_input("Ask about this dataset in natural language…")
     if q and settings.vertex_configured():
-        with st.spinner("Generating answer…"):
+        st.session_state.ttd_messages.append({"role": "user", "text": q})
+        with st.chat_message("user"):
+            st.markdown(q)
+        with st.spinner("Planning SQL and executing…"):
             try:
-                ans = generate_text(settings, q, trace_context=_langfuse_chat_context(settings))
-                st.session_state.ttd_messages.append(("user", q))
-                st.session_state.ttd_messages.append(("assistant", ans))
+                prepared = prepare_turn(
+                    settings,
+                    path,
+                    st.session_state.ttd_messages,
+                    q,
+                    trace_json=_langfuse_nl_sql_context(settings),
+                )
+                if prepared.error:
+                    st.session_state.ttd_messages.append(
+                        {
+                            "role": "assistant",
+                            "text": f"**Could not complete the request.**\n\n{prepared.error}",
+                            "sql": None,
+                            "table_preview": None,
+                            "chart_png_b64": None,
+                            "chart_spec": None,
+                        }
+                    )
+                    st.error(prepared.error)
+                else:
+                    st.session_state.ttd_last_sql = prepared.sql
+                    st.session_state.ttd_last_chart_spec = prepared.chart_spec
+                    st.session_state.ttd_pending_editor_sql = prepared.sql
+                    streamed = _ttd_display_streaming_assistant(
+                        settings, prepared, show_plan_caption=True
+                    )
+                    st.session_state.ttd_messages.append(_ttd_assistant_record(streamed, prepared))
+                    st.rerun()
             except Exception as err:  # noqa: BLE001
                 st.exception(err)
+    elif q and not settings.vertex_configured():
+        st.warning("Configure Vertex (GCP project) to use chat-with-data.")
 
 
 def main() -> None:
