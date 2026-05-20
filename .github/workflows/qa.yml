@@ -1,0 +1,70 @@
+# QA: lint, tests + coverage, dependency review (PRs), SonarCloud scan
+name: QA
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: qa-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-test-sonar:
+    name: Lint, test, SonarCloud
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Ruff check
+        run: ruff check app streamlit_app.py tests
+
+      - name: Ruff format (verify)
+        run: ruff format --check app streamlit_app.py tests
+
+      - name: pip-audit
+        run: pip-audit -r requirements.txt --skip-editable
+
+      - name: Pytest with coverage
+        run: |
+          pytest --cov=app --cov-report=xml --cov-report=term-missing
+
+      - name: SonarCloud scan
+        # Pinned tag v5.0.0 (verify at https://github.com/SonarSource/sonarqube-scan-action/releases)
+        uses: SonarSource/sonarqube-scan-action@0303d6b62e310685c0e34d0b9cde218036885c4d
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  dependency-review:
+    name: Dependency review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4

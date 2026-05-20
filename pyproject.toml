@@ -12,3 +12,16 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-v --strict-markers"
+
+[tool.coverage.run]
+source = ["app"]
+branch = true
+
+[tool.coverage.report]
+omit = ["*/tests/*"]
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:"]

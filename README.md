@@ -81,10 +81,36 @@ Create a project in [Langfuse Cloud](https://cloud.langfuse.com) (or self-host),
 
 If keys are empty, tracing is skipped and the app still runs.
 
-## SonarQube
+## CI / QA (GitHub Actions)
 
-- Project metadata is in `sonar-project.properties` (update `sonar.projectKey` to match your SonarQube / SonarCloud project).
-- Run analysis with your standard pipeline or locally using `sonar-scanner`, with `sonar.host.url` and authentication token supplied by your environment (do not commit tokens).
+Workflow: [`.github/workflows/qa.yml`](.github/workflows/qa.yml).
+
+On each push / pull request to `main`, `master`, or `develop` it runs:
+
+1. **Ruff** — lint and format check (`app`, `streamlit_app.py`, `tests`)
+2. **pip-audit** — known vulnerabilities in `requirements.txt`
+3. **Pytest + coverage** — tests with `coverage.xml` for SonarCloud
+4. **SonarCloud** — static analysis and coverage upload (needs secrets below)
+5. **Dependency review** — GitHub dependency review on pull requests (needs GitHub feature availability for your account)
+
+Local parity:
+
+```bash
+pip install -r requirements.txt -r requirements-dev.txt
+ruff check app streamlit_app.py tests && ruff format --check app streamlit_app.py tests
+pytest --cov=app --cov-report=xml --cov-report=term-missing
+```
+
+## SonarCloud
+
+This repo targets **[SonarCloud](https://sonarcloud.io)** with `sonar.organization=skluba` and  
+`sonar.projectKey=skluba_prompt-engineering-and-ai-applications` in `sonar-project.properties`.
+
+1. In SonarCloud, create or import the project so the **project key** matches `sonar-project.properties` exactly (adjust the file if the wizard assigns a different key).
+2. In the GitHub repo, add **`SONAR_TOKEN`**: repository → **Settings → Secrets and variables → Actions** → **New repository secret**. Use a **new SonarCloud token** (Account → Security or project analysis token). **Do not commit tokens** or paste them in issues/PRs.
+3. Push to GitHub; the QA workflow uploads analysis and coverage.
+
+If you ever expose a token in chat or a commit, **revoke it in SonarCloud** and generate a new one.
 
 ## Layout
 
