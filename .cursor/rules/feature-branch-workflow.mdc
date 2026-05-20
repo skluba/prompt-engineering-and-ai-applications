@@ -1,0 +1,15 @@
+---
+description: Build every new feature on its own Git branch before merge
+alwaysApply: true
+---
+
+# Feature Branch Workflow
+
+- Implement **every new feature, refactor, or non-trivial change** on a **dedicated Git branch** off `main` (or the team default base). Do **not** pile unrelated work onto one branch.
+- Name branches clearly, e.g. `feature/ingestion-pipeline`, `fix/embedder-timeout`.
+- Prefer small, reviewable slices: one cohesive goal per branch and per PR where possible.
+
+```text
+❌ BAD: Commit embedding changes + unrelated API refactor on feature/foo
+✅ GOOD: Branch feature/embeddings-batch from main → implement only that scope
+```

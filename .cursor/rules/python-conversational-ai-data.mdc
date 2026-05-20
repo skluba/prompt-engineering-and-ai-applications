@@ -1,0 +1,31 @@
+---
+description: Architecture for synthetic SQL data generation and natural-language data querying (Python)
+globs: **/*.py
+alwaysApply: false
+---
+
+# Conversational AI — Data Generation and NL Querying
+
+Act as a **senior Python engineer** building a system with two pillars: **synthetic data from SQL schemas** and **talk-to-your-data** over that data. Work is organized in three phases; keep boundaries clear in code and APIs.
+
+## Phase 1 — Core data generation engine
+
+- **Schema interpretation**: Parse DDL (or an equivalent schema source) into an internal model: tables, columns, types, nullable, defaults, PKs, unique constraints, check constraints, and **foreign keys** (referenced table/column, optional ON behavior).
+- **Generation order**: Respect FKs — generate **parent rows before children** (e.g. topological sort by dependency). For circular or self-FK cases, use explicit strategies (nullable deferral, multi-pass, or controlled batch sizes) documented in code.
+- **Realistic synthetic values**: Map SQL types to plausible generators (strings with length bounds, numeric ranges, dates, enums, UUIDs). Honor **CHECK**, **UNIQUE**, **NOT NULL**, and PK uniqueness.
+- **Volume**: Support **configurable row counts per table** (e.g. default / env / API parameter such as ~1000 rows per table), with sane caps and deterministic optional seeds for reproducibility.
+- **Integrity**: Validate post-generation (or incrementally) that FK references exist and constraints hold; fail loudly or repair in a defined, logged way — do not silently emit broken graphs.
+
+```text
+❌ BAD: Random rows per table with no FK order → orphan child rows
+✅ GOOD: Dependency-ordered generation + constraint-aware values + verification pass
+```
+
+## Phases 2 and 3 — Conversational core (query natural language)
+
+- **Purpose**: Let users ask questions in **natural language** over the (synthetic or loaded) SQL-backed dataset and get answers as **text**, **tables**, and **plots**.
+- **Query path**: Translate NL to **safe, parameterized SQL** (or a vetted intermediate); prefer read-only execution for analytics unless the product explicitly allows writes. Never concatenate raw user text into SQL.
+- **Presentation**: Structure responses for **narrative summary**, **tabular result sets** (columns aligned to query), and **charts** when the result shape fits (time series, categories + aggregates, distributions). Choose plot types from the data shape, not one chart for everything.
+- **Separation of concerns**: Keep **schema/metadata discovery**, **LLM orchestration**, and **execution + formatting** in distinct modules with clear interfaces so Phase 1 data can be swapped for real databases without rewriting the conversational layer.
+
+When parsing schemas or generating DDL-dependent logic, treat attached `.sql` files as inputs to the same architecture even though this rule is file-triggered on `**/*.py`.

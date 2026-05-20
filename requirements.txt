@@ -1,0 +1,15 @@
+# LLM — Google Gen AI SDK (Vertex AI: set vertexai + GCP project/location)
+google-genai>=1.0.0
+
+# UI
+streamlit>=1.40.0
+
+# Database
+sqlalchemy>=2.0.36
+psycopg[binary]>=3.2.0
+
+# Observability
+langfuse>=2.0.0,<3.0.0
+
+# App utilities
+pydantic-settings>=2.6.0

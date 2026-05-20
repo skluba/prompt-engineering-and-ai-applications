@@ -1,0 +1,13 @@
+__pycache__
+*.pyc
+.git
+.venv
+venv
+.env
+.env.*
+*.md
+.cursor
+.github
+postgres_data
+.scannerwork
+.sonar
