@@ -10,6 +10,7 @@ import pandas as pd
 
 from app.chat_with_data.charts import build_chart_png
 from app.chat_with_data.duckdb_runner import open_dataset_session, run_query
+from app.chat_with_data.planner_context import build_nl_sql_augmentations
 from app.chat_with_data.prompts import nl_sql_chart_prompt
 from app.chat_with_data.sql_guard import validate_read_only_select
 from app.config import Settings
@@ -63,13 +64,22 @@ def prepare_turn(
     trace_json: LangfuseTraceContext,
 ) -> PreparedTurn:
     """Call Gemini for SQL+chart plan, execute query, build chart; narration streams separately."""
-    con, table_names, schema_text = open_dataset_session(dataset_dir)
+    con, table_names, schema_by_table, _full_schema = open_dataset_session(dataset_dir)
     try:
-        prompt = nl_sql_chart_prompt(
-            schema_text=schema_text,
-            table_names=table_names,
-            history_lines=_history_lines(messages),
+        hist = _history_lines(messages)
+        few_block, routed_schema = build_nl_sql_augmentations(
+            settings,
             user_message=user_message,
+            history_lines=hist,
+            tables=table_names,
+            schema_by_table=schema_by_table,
+        )
+        prompt = nl_sql_chart_prompt(
+            schema_text=routed_schema,
+            table_names=table_names,
+            history_lines=hist,
+            user_message=user_message,
+            phase3_few_shots=few_block,
         )
         raw_plan = generate_json(settings, prompt, temperature=0.2, trace_context=trace_json)
         if not isinstance(raw_plan, dict):
@@ -125,7 +135,7 @@ def prepare_sql_only(
     chart_spec: dict[str, Any] | None,
 ) -> PreparedTurn:
     """Execute user-edited SQL with guard; caller streams explanation."""
-    con, _names, _schema = open_dataset_session(dataset_dir)
+    con, _names, _by_tbl_ignore, _schema_ignore = open_dataset_session(dataset_dir)
     try:
         safe = validate_read_only_select(sql)
         df = run_query(con, safe).df()

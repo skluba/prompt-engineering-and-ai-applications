@@ -28,6 +28,31 @@ class Settings(BaseSettings):
         default="gemini-2.0-flash",
         validation_alias=AliasChoices("GEMINI_MODEL", "GOOGLE_GEMINI_MODEL"),
     )
+    # Phase 3 — NL→SQL: Vertex text embeddings for few-shot + schema routing
+    text_embedding_model: str = Field(
+        default="text-embedding-005",
+        validation_alias=AliasChoices("TEXT_EMBEDDING_MODEL", "VERTEX_EMBEDDING_MODEL"),
+    )
+    nl_sql_max_detailed_schema_tables: int = Field(
+        default=12,
+        ge=1,
+        validation_alias="NL_SQL_MAX_DETAILED_SCHEMA_TABLES",
+    )
+    nl_sql_few_shot_count: int = Field(
+        default=4,
+        ge=0,
+        le=20,
+        validation_alias="NL_SQL_FEW_SHOT_COUNT",
+    )
+    nl_sql_full_schema_table_threshold: int = Field(
+        default=10,
+        ge=1,
+        validation_alias="NL_SQL_FULL_SCHEMA_TABLE_THRESHOLD",
+        description=(
+            "If the dataset has at most this many tables, include full per-table column lists "
+            "for every CSV; otherwise use semantic routing + stubs."
+        ),
+    )
     google_genai_use_vertexai: bool = Field(
         default=True,
         validation_alias=AliasChoices(

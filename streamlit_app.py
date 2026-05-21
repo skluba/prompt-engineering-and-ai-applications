@@ -496,7 +496,9 @@ def render_talk_to_data(settings: Settings) -> None:
     st.subheader("Chat")
     st.caption(
         "Guardrails: prompt-injection phrases, obvious off-topic requests, and common PII "
-        "patterns are filtered or masked before the model sees your text."
+        "patterns are filtered or masked before the model sees your text. Phase 3: Vertex "
+        "embeddings retrieve similar DuckDB few-shot queries; large manifests only send full "
+        "column lists for the most relevant tables."
     )
     st.session_state.ttd_messages = _normalize_ttd_messages(
         st.session_state.get("ttd_messages", [])

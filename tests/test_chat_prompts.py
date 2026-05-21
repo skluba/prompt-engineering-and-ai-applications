@@ -16,3 +16,16 @@ def test_nl_sql_chart_prompt_includes_user_and_schema() -> None:
     assert "Table a" in p
     assert '"a"' in p
     assert "JSON" in p
+
+
+def test_nl_sql_chart_prompt_injects_phase3_few_shots() -> None:
+    teach = "### guide\nSHOW examples"
+    prompt = nl_sql_chart_prompt(
+        schema_text="- t: id INT",
+        table_names=["t"],
+        history_lines=[],
+        user_message="q",
+        phase3_few_shots=teach,
+    )
+    assert "### guide" in prompt
+    assert "bare JSON object" in prompt
