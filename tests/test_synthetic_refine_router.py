@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
+import app.synthetic.refine_router as refine_router
 from app.config import get_settings
 from app.schema_ddl import parse_ddl
-import app.synthetic.refine_router as refine_router
 from app.synthetic.refine_router import (
     SyntheticRefinementPlan,
     apply_refinement_plan,
