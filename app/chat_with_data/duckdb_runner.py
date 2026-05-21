@@ -19,10 +19,17 @@ def _csv_path_literal(csv_path: Path) -> str:
     return str(csv_path.resolve()).replace("'", "''")
 
 
-def open_dataset_session(dataset_dir: Path) -> tuple[duckdb.DuckDBPyConnection, list[str], str]:
-    """In-memory DuckDB: one view per ``*.csv``; returns connection, table names, schema text."""
+def open_dataset_session(
+    dataset_dir: Path,
+) -> tuple[duckdb.DuckDBPyConnection, list[str], dict[str, str], str]:
+    """In-memory DuckDB: one view per ``*.csv``.
+
+    Returns ``(connection, table_stems_sorted, stem_to_schema_line, full_schema_blob)``.
+    Close the connection in a ``finally`` block.
+    """
     con = duckdb.connect(database=":memory:")
     tables: list[str] = []
+    schema_by_table: dict[str, str] = {}
     schema_lines: list[str] = []
     for csv_path in sorted(dataset_dir.glob("*.csv")):
         stem = _safe_ident(csv_path.stem)
@@ -34,11 +41,13 @@ def open_dataset_session(dataset_dir: Path) -> tuple[duckdb.DuckDBPyConnection, 
         tables.append(stem)
         desc = con.execute(f"DESCRIBE SELECT * FROM {quoted}").fetchall()
         cols = ", ".join(f"{row[0]} ({row[1]})" for row in desc)
-        schema_lines.append(f"- {stem}: {cols}")
+        line = f"- {stem}: {cols}"
+        schema_lines.append(line)
+        schema_by_table[stem] = line
     schema_text = "Available tables (use these exact names, double-quote if needed):\n" + "\n".join(
         schema_lines
     )
-    return con, tables, schema_text
+    return con, tables, schema_by_table, schema_text
 
 
 def run_query(con: duckdb.DuckDBPyConnection, sql: str):

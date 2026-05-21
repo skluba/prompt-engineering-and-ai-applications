@@ -71,6 +71,15 @@ The **Talk to your data** tab provides:
 
 Dependencies: `duckdb`, `matplotlib`, `seaborn` (see `requirements.txt`).
 
+## Phase 3: Advanced NL → SQL (few-shot retrieval + schema routing)
+
+The Talk-to-your-data planner injects Phase 3 context before Gemini produces JSON SQL:
+
+1. **Vector-style few-shot lookup** — `app/chat_with_data/nl_sql_fewshots.json` holds canonical “question ↔ DuckDB SQL” snippets. During each NL turn Vertex **`text-embedding-005`** embeddings (batch over all examples plus the trimmed user utterance / recent turns) rerank snippets; lexical token overlap blends in automatically when embeddings are unavailable so local tests stays offline-friendly.
+2. **Dynamic schemas** — Datasets whose CSV count exceeds `NL_SQL_FULL_SCHEMA_TABLE_THRESHOLD` (default `10`) only receive full `DESCRIBE` lines for highest-scoring tables (plus stems mentioned verbatim in chat or referenced in pasted SQL plus history). Others still appear **by view name only** so the model knows DuckDB exposes them yet should not hallucinate undocumented columns (`app/chat_with_data/planner_context.py`).
+
+Tune via `.env`: `TEXT_EMBEDDING_MODEL`, `NL_SQL_MAX_DETAILED_SCHEMA_TABLES`, `NL_SQL_FEW_SHOT_COUNT`.
+
 ## Docker (app + database)
 
 Compose sets **`DATABASE_URL`** for the `app` service and, by default, bind-mounts **Application Default Credentials** from  

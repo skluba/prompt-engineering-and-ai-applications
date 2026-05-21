@@ -8,7 +8,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.config import get_settings
-from app.llm import _extract_json_payload, generate_json, generate_text, generate_text_stream
+from app.llm import (
+    _extract_json_payload,
+    embed_texts,
+    generate_json,
+    generate_text,
+    generate_text_stream,
+)
 from app.tracing import LangfuseTraceContext
 
 
@@ -366,3 +372,49 @@ def test_generate_text_langfuse_error_on_failed_call(
             generate_text(settings, "hi")
     gen.end.assert_called_with(level="ERROR", status_message="fail")
     lf.flush.assert_called()
+
+
+def test_embed_texts_empty_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj")
+    get_settings.cache_clear()
+    assert embed_texts(get_settings(), []) == []
+
+
+def test_embed_texts_maps_embeddings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj")
+    get_settings.cache_clear()
+    settings = get_settings()
+
+    class _Vec:
+        def __init__(self, values):
+            self.values = values
+
+    class _EmbResp:
+        def __init__(self, embeddings):
+            self.embeddings = embeddings
+
+    models = MagicMock()
+    models.embed_content.return_value = _EmbResp(
+        [_Vec([0.5, 0.5]), _Vec(None), _Vec([])]  # None branch -> [], empty vals
+    )
+    client = MagicMock()
+    client.models = models
+    with patch("app.llm.genai.Client", return_value=client):
+        out = embed_texts(settings, ["a", "b", "c"])
+    assert out == [[0.5, 0.5], [], []]
+
+
+def test_embed_texts_none_embeddings_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj")
+    get_settings.cache_clear()
+    settings = get_settings()
+
+    class _EmbResp:
+        embeddings = None
+
+    models = MagicMock()
+    models.embed_content.return_value = _EmbResp()
+    client = MagicMock()
+    client.models = models
+    with patch("app.llm.genai.Client", return_value=client):
+        assert embed_texts(settings, ["x"]) == []

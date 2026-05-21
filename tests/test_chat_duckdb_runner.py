@@ -12,7 +12,7 @@ from app.chat_with_data.duckdb_runner import open_dataset_session
 def test_open_dataset_session_join(tmp_path: Path) -> None:
     (tmp_path / "orders.csv").write_text("order_id,customer_id\n1,10\n2,10\n", encoding="utf-8")
     (tmp_path / "customers.csv").write_text("customer_id,name\n10,Ann\n", encoding="utf-8")
-    con, tables, schema = open_dataset_session(tmp_path)
+    con, tables, _by_tbl, schema = open_dataset_session(tmp_path)
     try:
         assert sorted(tables) == ["customers", "orders"]
         assert "orders" in schema and "customers" in schema
