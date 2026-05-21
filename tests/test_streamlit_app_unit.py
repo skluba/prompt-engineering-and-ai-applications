@@ -777,6 +777,105 @@ def test_syn_conversational_chat_plan_clarifies_only(
     assert mock_st.session_state.syn_data == {"U": [{"id": 1}]}
 
 
+def test_syn_conversational_vertex_disabled_shows_info(
+    monkeypatch: pytest.MonkeyPatch,
+    mock_st: MagicMock,
+) -> None:
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "")
+    get_settings.cache_clear()
+    from app.schema_ddl import parse_ddl
+
+    schema = parse_ddl("CREATE TABLE U (id INT PRIMARY KEY);")
+    mock_st.session_state.syn_ddl = "CREATE TABLE U (id INT PRIMARY KEY);"
+    mock_st.session_state.syn_instructions = ""
+    mock_st.session_state.syn_data = {"U": [{"id": 1}]}
+    mock_st.session_state.syn_chat_messages = []
+    mock_st.chat_input.return_value = None
+    streamlit_app._syn_render_conversational_refinement(get_settings(), schema, 0.1)
+    mock_st.info.assert_called_once()
+
+
+def test_syn_conversational_coerces_nonlist_chat_store(
+    monkeypatch: pytest.MonkeyPatch,
+    mock_st: MagicMock,
+) -> None:
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj")
+    get_settings.cache_clear()
+    from app.schema_ddl import parse_ddl
+
+    schema = parse_ddl("CREATE TABLE U (id INT PRIMARY KEY);")
+    mock_st.session_state.syn_ddl = "CREATE TABLE U (id INT PRIMARY KEY);"
+    mock_st.session_state.syn_instructions = ""
+    mock_st.session_state.syn_data = {"U": [{"id": 1}]}
+    mock_st.session_state.syn_chat_messages = "bogus"  # type: ignore[assignment]
+    mock_st.chat_input.return_value = None
+    streamlit_app._syn_render_conversational_refinement(get_settings(), schema, 0.1)
+    assert mock_st.session_state.syn_chat_messages == []
+
+
+def test_syn_conversational_skips_empty_bodies_coerces_role(
+    monkeypatch: pytest.MonkeyPatch,
+    mock_st: MagicMock,
+) -> None:
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj")
+    get_settings.cache_clear()
+    from app.schema_ddl import parse_ddl
+
+    schema = parse_ddl("CREATE TABLE U (id INT PRIMARY KEY);")
+    mock_st.session_state.syn_ddl = "CREATE TABLE U (id INT PRIMARY KEY);"
+    mock_st.session_state.syn_instructions = ""
+    mock_st.session_state.syn_data = {"U": [{"id": 1}]}
+    mock_st.session_state.syn_chat_messages = [
+        {"role": "user", "content": ""},
+        {"role": "tool", "content": "visible"},
+    ]
+    mock_st.chat_input.return_value = None
+    streamlit_app._syn_render_conversational_refinement(get_settings(), schema, 0.2)
+    assert mock_st.chat_message.call_count == 1
+    mock_st.markdown.assert_called_once()
+
+
+def test_syn_conversational_whitespace_prompt_is_ignored(
+    monkeypatch: pytest.MonkeyPatch,
+    mock_st: MagicMock,
+) -> None:
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj")
+    get_settings.cache_clear()
+    from app.schema_ddl import parse_ddl
+
+    streamlit_app._init_synthetic_session_state()
+    schema = parse_ddl("CREATE TABLE U (id INT PRIMARY KEY);")
+    mock_st.session_state.syn_ddl = "CREATE TABLE U (id INT PRIMARY KEY);"
+    mock_st.session_state.syn_chat_messages = []
+    mock_st.chat_input.side_effect = ["  \t  ", None]
+    streamlit_app._syn_render_conversational_refinement(get_settings(), schema, 0.2)
+    assert len(mock_st.session_state.syn_chat_messages) == 0
+
+
+def test_syn_conversational_plan_failure_records_error_reply(
+    monkeypatch: pytest.MonkeyPatch,
+    mock_st: MagicMock,
+) -> None:
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj")
+    get_settings.cache_clear()
+    from app.schema_ddl import parse_ddl
+
+    streamlit_app._init_synthetic_session_state()
+    schema = parse_ddl("CREATE TABLE U (id INT PRIMARY KEY);")
+    mock_st.session_state.syn_ddl = "CREATE TABLE U (id INT PRIMARY KEY);"
+    mock_st.session_state.syn_chat_messages = []
+    mock_st.chat_input.return_value = "oops"
+    monkeypatch.setattr(
+        streamlit_app,
+        "plan_dataset_refinement_turn",
+        lambda **_k: (_ for _ in ()).throw(RuntimeError("planner down")),
+    )
+    streamlit_app._syn_render_conversational_refinement(get_settings(), schema, 0.2)
+    assert mock_st.session_state.syn_chat_messages[-1]["role"] == "assistant"
+    assert "Something went wrong" in mock_st.session_state.syn_chat_messages[-1]["content"]
+    mock_st.rerun.assert_called_once()
+
+
 def test_syn_render_table_expanders_shows_dataframe(
     mock_st: MagicMock,
     monkeypatch: pytest.MonkeyPatch,
