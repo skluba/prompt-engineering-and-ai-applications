@@ -17,8 +17,9 @@ from app.config import Settings, get_settings
 from app.db import check_connection, get_engine
 from app.guardrails import GuardrailViolation, apply_chat_guardrails, mask_pii_in_text
 from app.llm import generate_text_stream
-from app.schema_ddl import parse_ddl
+from app.schema_ddl import ParsedSchema, parse_ddl
 from app.synthetic.generate import generate_full_dataset, persist_and_zip, refine_table
+from app.synthetic.refine_router import apply_refinement_plan, plan_dataset_refinement_turn
 from app.synthetic.storage import DEFAULT_DATA_ROOT, list_datasets
 from app.synthetic.validate import validate_tables_data
 from app.tracing import LangfuseTraceContext
@@ -110,6 +111,7 @@ def _init_synthetic_session_state() -> None:
         ("syn_errors", []),
         ("syn_dataset_id", None),
         ("syn_zip", None),
+        ("syn_chat_messages", []),
     ):
         if k not in st.session_state:
             st.session_state[k] = v
@@ -152,6 +154,7 @@ def _syn_run_generate_action(
             st.session_state.syn_errors = errors
             st.session_state.syn_dataset_id = None
             st.session_state.syn_zip = None
+            st.session_state.syn_chat_messages = []
         except Exception as err:  # noqa: BLE001
             st.exception(err)
 
@@ -219,6 +222,78 @@ def _syn_render_table_expanders(settings: Settings, schema, temperature: float) 
             _syn_try_refine_table(settings, schema, tname, feedback, temperature)
 
 
+def _syn_render_conversational_refinement(
+    settings: Settings,
+    schema: ParsedSchema,
+    temperature: float,
+) -> None:
+    if not isinstance(st.session_state.get("syn_chat_messages"), list):
+        st.session_state.syn_chat_messages = []
+
+    st.subheader("Conversational refinement")
+    st.caption(
+        "Describe updates in plain language (null ratios, substitutions, tone tweaks); "
+        "a router picks which DDL table(s) to edit."
+    )
+
+    vertex_ok = settings.vertex_configured()
+    if not vertex_ok:
+        st.info("Configure Vertex credentials to use conversational refinement.")
+
+    for raw in st.session_state.syn_chat_messages:
+        role = raw.get("role", "assistant")
+        if role not in ("user", "assistant"):
+            role = "assistant"
+        body = str(raw.get("content", "") or "")
+        if not body:
+            continue
+        with st.chat_message(role):
+            st.markdown(body)
+
+    prompt = st.chat_input(
+        "Ask for edits to the synthetic dataset …",
+        disabled=not vertex_ok,
+        key="syn_chat_input_turn",
+    )
+    if not prompt or not str(prompt).strip():
+        return
+
+    tip = str(prompt).strip()
+    msgs_for_plan = [*st.session_state.syn_chat_messages, {"role": "user", "content": tip}]
+
+    assistant_reply = ""
+    try:
+        with st.spinner("Planning refinement …"):
+            plan = plan_dataset_refinement_turn(
+                settings,
+                schema=schema,
+                ddl=st.session_state.syn_ddl,
+                original_instructions=st.session_state.syn_instructions,
+                chat_messages=msgs_for_plan,
+                trace_context=_langfuse_synthetic_context(settings),
+            )
+        if plan.apply_refinements:
+            n_tables = len(plan.target_tables)
+            with st.spinner(f"Applying table edits ({n_tables}) …"):
+                new_tables, errs = apply_refinement_plan(
+                    settings,
+                    schema=schema,
+                    tables=st.session_state.syn_data,
+                    plan=plan,
+                    refinement_temperature=temperature,
+                    trace_context=_langfuse_synthetic_context(settings),
+                )
+                st.session_state.syn_data = new_tables
+                st.session_state.syn_errors = errs
+                st.session_state.syn_zip = None
+        assistant_reply = plan.assistant_reply
+    except Exception as err:  # noqa: BLE001
+        assistant_reply = f"**Something went wrong:** `{err}`"
+    st.session_state.syn_chat_messages.append({"role": "user", "content": tip})
+    st.session_state.syn_chat_messages.append({"role": "assistant", "content": assistant_reply})
+    st.rerun()
+
+
 def _syn_save_and_download(rows_n: int, temperature: float) -> None:
     did = st.session_state.syn_dataset_id or str(uuid.uuid4())
     if st.button("Save dataset to disk & prepare download"):
@@ -252,7 +327,8 @@ def render_data_generation(settings: Settings) -> None:
     st.header("Synthetic data generation")
     st.caption(
         "Upload a DDL (MySQL-style samples work well), add instructions, then generate. "
-        "Refine per table with feedback; save CSVs + manifest for the Talk tab."
+        "Refine with the conversational chat below or use per-table text areas; "
+        "save CSVs + manifest for the Talk tab."
     )
 
     _syn_handle_file_upload()
@@ -286,6 +362,7 @@ def render_data_generation(settings: Settings) -> None:
     schema = parse_ddl(st.session_state.syn_ddl)
     st.subheader("Table previews & refinement")
     _syn_render_table_expanders(settings, schema, temperature)
+    _syn_render_conversational_refinement(settings, schema, temperature)
     _syn_save_and_download(rows_n, temperature)
 
 

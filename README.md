@@ -54,7 +54,7 @@ The Streamlit app includes a **Data Generation** mode (sidebar) that:
 
 1. Accepts a DDL file (`.sql`, `.txt`, or `.ddl`) or pasted DDL text — sample schemas live in the repo root (`company_employee_schema.ddl`, `library_mgm_schema.ddl`, `restrurants_schema.ddl`).
 2. Lets you add free-text instructions, set **temperature**, and click **Generate** to produce JSON rows per table via **Gemini on Vertex**; results are validated for NOT NULL, PK/unique, ENUM literals, and foreign keys.
-3. Shows a **preview per table**; each table has a feedback box and **Submit** to refine that table with the model.
+3. Shows a **preview per table**; **chat-style conversational refinement** routes plain-language requests to one stem, several, or **all tables** (`app/synthetic/refine_router.py` + sequential `refine_table` passes so FK snapshots stay coherent). Each table still has its own feedback box + **Submit** for surgical tweaks.
 4. **Save dataset to disk** writes CSVs + `manifest.json` under **`data/generated/<dataset_id>/`** (gitignored contents; the folder is kept via `data/generated/.gitkeep`). A **ZIP download** is offered from the same save action.
 
 Use **Talk to your data** in the sidebar to pick a saved dataset, ask questions in natural language, and get **DuckDB** `SELECT` / `WITH` queries (joins and aggregates supported), **tabular results**, **streaming** Gemini explanations, optional **SQL editing** + re-run, and **Seaborn** charts when the model proposes a chart spec.

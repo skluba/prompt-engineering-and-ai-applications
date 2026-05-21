@@ -119,6 +119,7 @@ def test_init_synthetic_session_state(mock_st: MagicMock) -> None:
     streamlit_app._init_synthetic_session_state()
     assert mock_st.session_state["syn_ddl"] == ""
     assert mock_st.session_state["syn_data"] is None
+    assert mock_st.session_state["syn_chat_messages"] == []
 
 
 def test_syn_handle_file_upload(mock_st: MagicMock) -> None:
@@ -387,10 +388,12 @@ def test_syn_run_generate_success_stores_tables(
     streamlit_app._init_synthetic_session_state()
     mock_st.button.return_value = True
     mock_st.session_state["syn_ddl"] = "CREATE TABLE t (id INT);"
+    mock_st.session_state["syn_chat_messages"] = [{"role": "user", "content": "stale"}]
     fake_out = ({"t": [{}]}, [], MagicMock())
     with patch.object(streamlit_app, "generate_full_dataset", return_value=fake_out):
         streamlit_app._syn_run_generate_action(get_settings(), 5, 0.2)
     assert mock_st.session_state.syn_data == {"t": [{}]}
+    assert mock_st.session_state.syn_chat_messages == []
     mock_st.exception.assert_not_called()
 
 
@@ -687,6 +690,93 @@ def test_syn_try_refine_updates_rows(monkeypatch: pytest.MonkeyPatch, mock_st: M
     mock_st.rerun.assert_called_once()
 
 
+def test_syn_conversational_chat_applies_planned_edits(
+    monkeypatch: pytest.MonkeyPatch,
+    mock_st: MagicMock,
+) -> None:
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj")
+    get_settings.cache_clear()
+    from app.schema_ddl import parse_ddl
+    from app.synthetic.refine_router import SyntheticRefinementPlan
+
+    streamlit_app._init_synthetic_session_state()
+    ddl = "CREATE TABLE U (id INT PRIMARY KEY);"
+    schema = parse_ddl(ddl)
+    mock_st.session_state.syn_ddl = ddl
+    mock_st.session_state.syn_instructions = "seed"
+    mock_st.session_state.syn_data = {"U": [{"id": 9}]}
+    mock_st.session_state.syn_chat_messages = []
+    mock_st.chat_input.return_value = "rewrite ids"
+
+    plan_obj = SyntheticRefinementPlan(
+        assistant_reply="Updated row keys.",
+        apply_refinements=True,
+        target_tables=("U",),
+        refinement_instruction="set id to 42",
+    )
+
+    def fake_plan(*_a, **_k):
+        return plan_obj
+
+    def fake_apply(*_a, **_k):
+        tbl = dict(_k.get("tables", {}))
+        merged = dict(tbl)
+        merged["U"] = [{"id": 42}]
+        return merged, []
+
+    monkeypatch.setattr(streamlit_app, "plan_dataset_refinement_turn", fake_plan)
+    monkeypatch.setattr(streamlit_app, "apply_refinement_plan", fake_apply)
+
+    streamlit_app._syn_render_conversational_refinement(get_settings(), schema, 0.44)
+
+    msgs = mock_st.session_state.syn_chat_messages
+    assert len(msgs) == 2
+    assert msgs[0]["role"] == "user"
+    assert msgs[0]["content"] == "rewrite ids"
+    assert msgs[1]["role"] == "assistant"
+    assert msgs[1]["content"] == "Updated row keys."
+    assert mock_st.session_state.syn_data["U"][0]["id"] == 42
+    mock_st.rerun.assert_called_once()
+
+
+def test_syn_conversational_chat_plan_clarifies_only(
+    monkeypatch: pytest.MonkeyPatch,
+    mock_st: MagicMock,
+) -> None:
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj")
+    get_settings.cache_clear()
+    from app.schema_ddl import parse_ddl
+    from app.synthetic.refine_router import SyntheticRefinementPlan
+
+    streamlit_app._init_synthetic_session_state()
+    ddl = "CREATE TABLE U (id INT PRIMARY KEY);"
+    schema = parse_ddl(ddl)
+    mock_st.session_state.syn_ddl = ddl
+    mock_st.session_state.syn_instructions = ""
+    mock_st.session_state.syn_data = {"U": [{"id": 1}]}
+
+    monkeypatch.setattr(
+        streamlit_app,
+        "plan_dataset_refinement_turn",
+        lambda **_k: SyntheticRefinementPlan(
+            assistant_reply="Which column?",
+            apply_refinements=False,
+            target_tables=(),
+            refinement_instruction="",
+        ),
+    )
+
+    def boom(*args, **kwargs):
+        raise AssertionError("should not refine")
+
+    monkeypatch.setattr(streamlit_app, "apply_refinement_plan", boom)
+
+    mock_st.chat_input.return_value = "make it nicer"
+    streamlit_app._syn_render_conversational_refinement(get_settings(), schema, 0.2)
+
+    assert mock_st.session_state.syn_data == {"U": [{"id": 1}]}
+
+
 def test_syn_render_table_expanders_shows_dataframe(
     mock_st: MagicMock,
     monkeypatch: pytest.MonkeyPatch,
@@ -763,6 +853,7 @@ def test_render_data_generation_parses_ddl_when_data_present(
     with (
         patch.object(streamlit_app, "parse_ddl", return_value=schema),
         patch.object(streamlit_app, "_syn_render_table_expanders") as rex,
+        patch.object(streamlit_app, "_syn_render_conversational_refinement"),
         patch.object(streamlit_app, "_syn_save_and_download"),
     ):
         streamlit_app.render_data_generation(get_settings())
