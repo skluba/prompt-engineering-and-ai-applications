@@ -35,7 +35,8 @@ def _history_lines(messages: list[dict[str, Any]]) -> list[str]:
     for m in messages:
         role = m.get("role", "")
         if role == "user":
-            lines.append(f"User: {m.get('text', '')}")
+            # Prefer model-facing text (PII-masked); fall back for legacy messages.
+            lines.append(f"User: {m.get('text', m.get('display_text', ''))}")
         elif role == "assistant":
             t = m.get("text", "")
             sql = m.get("sql")

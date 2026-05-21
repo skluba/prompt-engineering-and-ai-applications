@@ -27,6 +27,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://app:app@db:5432/app
       GOOGLE_GENAI_USE_VERTEXAI: "true"
+      SYNTHETIC_POSTGRES_MIRROR: "true"
       # Langfuse Python SDK (inside Docker network; overrides LANGFUSE_HOST from .env if set there)
       LANGFUSE_HOST: http://lf-web:3000
       # In-container path. Default when unset: /secrets/application_default_credentials.json (mounted below).
