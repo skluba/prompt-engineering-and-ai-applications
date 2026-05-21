@@ -1,0 +1,58 @@
+[
+  {
+    "question": "How many rows exist in total?",
+    "sql": "SELECT COUNT(*) AS n FROM tbl"
+  },
+  {
+    "question": "Show the average amount grouped by department",
+    "sql": "SELECT department, AVG(amount) AS avg_amount FROM payroll GROUP BY 1 ORDER BY 2 DESC"
+  },
+  {
+    "question": "Top 10 products by revenue in the last quarter",
+    "sql": "SELECT product_id, SUM(revenue) AS total FROM orders WHERE sale_date >= DATE '2025-07-01' GROUP BY product_id ORDER BY total DESC LIMIT 10"
+  },
+  {
+    "question": "Count orders per customer and only include customers with more than five orders",
+    "sql": "SELECT customer_id, COUNT(*) AS order_count FROM orders GROUP BY customer_id HAVING COUNT(*) > 5"
+  },
+  {
+    "question": "List employees who joined after January 2024",
+    "sql": "SELECT * FROM employees WHERE start_date >= DATE '2024-02-01'"
+  },
+  {
+    "question": "Join shipments to warehouses and show shipment id with city name",
+    "sql": "SELECT s.id, w.city FROM shipments s INNER JOIN warehouses w ON s.warehouse_id = w.id"
+  },
+  {
+    "question": "What is the percentage of fulfilled orders using a CASE expression?",
+    "sql": "SELECT 100.0 * SUM(CASE WHEN status = 'fulfilled' THEN 1 ELSE 0 END) / COUNT(*) AS pct FROM orders"
+  },
+  {
+    "question": "Use a Common Table Expression to rank stores by transactions then select top tier",
+    "sql": "WITH counts AS (SELECT store_id, COUNT(*) AS txs FROM receipts GROUP BY store_id) SELECT * FROM counts ORDER BY txs DESC LIMIT 5"
+  },
+  {
+    "question": "Compare this month totals to prior month totals per SKU",
+    "sql": "WITH cur AS (SELECT sku, SUM(qty) AS q FROM ledger WHERE ym = '2025-09' GROUP BY sku), prv AS (SELECT sku, SUM(qty) AS q FROM ledger WHERE ym = '2025-08' GROUP BY sku) SELECT COALESCE(cur.sku, prv.sku) AS sku, cur.q AS this_m, prv.q AS prior_m FROM cur FULL OUTER JOIN prv ON cur.sku = prv.sku"
+  },
+  {
+    "question": "Filter null foreign keys before joining",
+    "sql": "SELECT a.id, b.name FROM a LEFT JOIN b ON a.ref_id IS NOT NULL AND a.ref_id = b.id"
+  },
+  {
+    "question": "Replace missing category labels with Unknown and aggregate spends",
+    "sql": "SELECT COALESCE(NULLIF(TRIM(category), ''), 'Unknown') AS category, SUM(amount) FROM budgets GROUP BY 1"
+  },
+  {
+    "question": "Break down revenue by calendar month extracted from timestamps",
+    "sql": "SELECT DATE_TRUNC('month', CAST(event_ts AS TIMESTAMP)) AS m, SUM(revenue) AS r FROM clicks GROUP BY 1 ORDER BY 1"
+  },
+  {
+    "question": "Deduplicate by latest record per identifier",
+    "sql": "SELECT * FROM rankings WHERE version = (SELECT MAX(version) FROM rankings r2 WHERE r2.entity_id = rankings.entity_id)"
+  },
+  {
+    "question": "Running total of shipments ordered by scheduled date",
+    "sql": "SELECT scheduled_date, SUM(qty) OVER (ORDER BY scheduled_date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running_qty FROM outbound"
+  }
+]

@@ -9,12 +9,23 @@ def nl_sql_chart_prompt(
     table_names: list[str],
     history_lines: list[str],
     user_message: str,
+    phase3_few_shots: str = "",
 ) -> str:
     """Ask the model for JSON: assistant_message, sql, chart."""
     hist = "\n".join(history_lines[-20:]) if history_lines else "(no prior messages)"
     tables_csv = ", ".join(f'"{t}"' for t in table_names)
+    extras = ""
+    fs = phase3_few_shots.strip()
+    if fs:
+        extras = f"""
+
+{fs}
+
+Reminder: Below examples may use markdown fences solely for readability; YOUR answer must remain a
+single bare JSON object (no prose, no fences) as specified."""
+
     return f"""You are an analytics assistant. The user has CSV-backed tables in DuckDB.
-{schema_text}
+{schema_text}{extras}
 
 Table names for SQL: {tables_csv}
 

@@ -12,6 +12,19 @@ from app.config import get_settings
 from app.tracing import LangfuseTraceContext
 
 
+def _passthrough_nl_sql_augmentation(
+    _settings,
+    *,
+    user_message: str,
+    history_lines,
+    tables: list,
+    schema_by_table: dict,
+    **_unused,
+) -> tuple[str, str]:
+    """Keep routed schema factual for mocked LLM paths (avoid live Vertex embeddings in tests)."""
+    return "", "\n".join(schema_by_table[t] for t in tables)
+
+
 def test_prepare_turn_happy_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj")
     get_settings.cache_clear()
@@ -23,7 +36,12 @@ def test_prepare_turn_happy_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         "chart": {"kind": "none"},
     }
     ctx = LangfuseTraceContext()
-    with patch("app.chat_with_data.turn.generate_json", return_value=plan):
+    with (
+        patch(
+            "app.chat_with_data.turn.build_nl_sql_augmentations", _passthrough_nl_sql_augmentation
+        ),
+        patch("app.chat_with_data.turn.generate_json", return_value=plan),
+    ):
         out = prepare_turn(
             settings,
             tmp_path,
@@ -42,7 +60,12 @@ def test_prepare_turn_invalid_json_shape(tmp_path: Path, monkeypatch: pytest.Mon
     get_settings.cache_clear()
     (tmp_path / "t.csv").write_text("a\n1\n", encoding="utf-8")
     settings = get_settings()
-    with patch("app.chat_with_data.turn.generate_json", return_value=[]):
+    with (
+        patch(
+            "app.chat_with_data.turn.build_nl_sql_augmentations", _passthrough_nl_sql_augmentation
+        ),
+        patch("app.chat_with_data.turn.generate_json", return_value=[]),
+    ):
         out = prepare_turn(settings, tmp_path, [], "q", trace_json=LangfuseTraceContext())
     assert out.error is not None
 
@@ -64,7 +87,12 @@ def test_prepare_turn_passes_conversation_history(
             "chart": {"kind": "none"},
         }
 
-    with patch("app.chat_with_data.turn.generate_json", side_effect=fake_json):
+    with (
+        patch(
+            "app.chat_with_data.turn.build_nl_sql_augmentations", _passthrough_nl_sql_augmentation
+        ),
+        patch("app.chat_with_data.turn.generate_json", side_effect=fake_json),
+    ):
         prepare_turn(
             settings,
             tmp_path,
@@ -98,7 +126,12 @@ def test_prepare_turn_history_uses_model_facing_user_text(
             "chart": {"kind": "none"},
         }
 
-    with patch("app.chat_with_data.turn.generate_json", side_effect=fake_json):
+    with (
+        patch(
+            "app.chat_with_data.turn.build_nl_sql_augmentations", _passthrough_nl_sql_augmentation
+        ),
+        patch("app.chat_with_data.turn.generate_json", side_effect=fake_json),
+    ):
         prepare_turn(
             settings,
             tmp_path,

@@ -29,6 +29,22 @@ def _get_client(settings: Settings) -> genai.Client:
     )
 
 
+def embed_texts(settings: Settings, texts: list[str]) -> list[list[float]]:
+    """Batch text embeddings via Vertex using the configured embedding model."""
+    if not texts:
+        return []
+    client = _get_client(settings)
+    model = settings.text_embedding_model.strip() or "text-embedding-005"
+    resp = client.models.embed_content(model=model, contents=list(texts))
+    out: list[list[float]] = []
+    if resp.embeddings is None:
+        return []
+    for emb in resp.embeddings:
+        vals = getattr(emb, "values", None) or []
+        out.append([float(x) for x in vals])
+    return out
+
+
 def generate_text(
     settings: Settings,
     user_prompt: str,
@@ -85,6 +101,40 @@ def generate_text(
             lf.flush()
 
 
+def _trace_prompt_for_langfuse(prompt: str, *, max_chars: int = 8000) -> str:
+    if len(prompt) <= max_chars:
+        return prompt
+    return f"{prompt[:max_chars]}\n…"
+
+
+def _lf_begin_stream_trace(
+    lf: Any,
+    *,
+    ctx: LangfuseTraceContext,
+    settings: Settings,
+    user_prompt: str,
+):
+    """Open Langfuse trace + generation with truncated input (same cutoff as Gemini logging)."""
+    version = settings.langfuse_trace_version.strip() or None
+    meta = dict(ctx.metadata) if ctx.metadata else None
+    clipped = _trace_prompt_for_langfuse(user_prompt)
+    trace_obj = lf.trace(
+        name=ctx.trace_name,
+        input=clipped,
+        session_id=ctx.session_id,
+        user_id=ctx.user_id,
+        tags=list(ctx.tags),
+        metadata=meta,
+        version=version,
+    )
+    generation_obj = trace_obj.generation(
+        name=ctx.generation_name,
+        model=settings.gemini_model,
+        input=clipped,
+    )
+    return trace_obj, generation_obj
+
+
 def generate_text_stream(
     settings: Settings,
     user_prompt: str,
@@ -97,23 +147,10 @@ def generate_text_stream(
     trace = None
     generation = None
     ctx = trace_context or LangfuseTraceContext()
-    version = settings.langfuse_trace_version.strip() or None
 
     if lf is not None:
-        meta = dict(ctx.metadata) if ctx.metadata else None
-        trace = lf.trace(
-            name=ctx.trace_name,
-            input=user_prompt if len(user_prompt) <= 8000 else f"{user_prompt[:8000]}\n…",
-            session_id=ctx.session_id,
-            user_id=ctx.user_id,
-            tags=list(ctx.tags),
-            metadata=meta,
-            version=version,
-        )
-        generation = trace.generation(
-            name=ctx.generation_name,
-            model=settings.gemini_model,
-            input=user_prompt if len(user_prompt) <= 8000 else f"{user_prompt[:8000]}\n…",
+        trace, generation = _lf_begin_stream_trace(
+            lf, ctx=ctx, settings=settings, user_prompt=user_prompt
         )
 
     collected: list[str] = []
