@@ -663,9 +663,7 @@ def test_syn_try_refine_empty_feedback_warnings(
     monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj")
     get_settings.cache_clear()
     mock_st.button.return_value = True
-    streamlit_app._syn_try_refine_table(
-        get_settings(), MagicMock(), "tname", "\t\n  ", 0.5
-    )
+    streamlit_app._syn_try_refine_table(get_settings(), MagicMock(), "tname", "\t\n  ", 0.5)
     mock_st.warning.assert_called_once()
 
 
@@ -684,9 +682,7 @@ def test_syn_try_refine_updates_rows(monkeypatch: pytest.MonkeyPatch, mock_st: M
         patch.object(streamlit_app, "refine_table", return_value=[{"a": 99}]),
         patch.object(streamlit_app, "validate_tables_data", return_value=[]),
     ):
-        streamlit_app._syn_try_refine_table(
-            get_settings(), _Sch(), "widgets", "bigger counts", 0.1
-        )
+        streamlit_app._syn_try_refine_table(get_settings(), _Sch(), "widgets", "bigger counts", 0.1)
     assert mock_st.session_state.syn_data["widgets"] == [{"a": 99}]
     mock_st.rerun.assert_called_once()
 
@@ -881,4 +877,3 @@ def test_langfuse_stream_context_skips_blank_user(
     mock_st.user = None
     ctx = streamlit_app._langfuse_stream_context(get_settings())
     assert ctx.user_id is None
-
